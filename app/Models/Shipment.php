@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 class Shipment extends Model
 {
@@ -58,13 +59,15 @@ class Shipment extends Model
             return $query;
         }
 
+        // Range dihitung mundur dari tanggal manifest TERAKHIR di data (bukan hari ini),
+        // agar dashboard tetap menampilkan data aktif meski sumber GSheet belum diperbarui.
         $latest = $query->clone()->selectRaw('MAX(tanggal_manifest) as latest')->value('latest');
 
         if (! $latest) {
             return $query;
         }
 
-        $anchor = ($latest instanceof \DateTimeInterface) ? $latest : \Illuminate\Support\Carbon::parse($latest);
+        $anchor = ($latest instanceof \DateTimeInterface) ? $latest : Carbon::parse($latest);
 
         return $query->where('tanggal_manifest', '>=', $anchor->copy()->subDays($days - 1)->startOfDay());
     }

@@ -9,6 +9,24 @@
             <p class="mt-1 text-sm text-slate-500">Seluruh resi pengiriman — cari, filter, dan pantau status tiap shipment.</p>
         </div>
         <div class="flex items-center gap-2">
+            {{-- Export Excel --}}
+            <form method="POST" action="{{ route('shipments.export') }}">
+                @csrf
+                <input type="hidden" name="status" value="{{ $status }}">
+                <input type="hidden" name="provinsi" value="{{ $provinsi }}">
+                <input type="hidden" name="stagging" value="{{ $stagging }}">
+                <input type="hidden" name="sla" value="{{ $sla }}">
+                <input type="hidden" name="search" value="{{ $search }}">
+                <button type="submit"
+                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold text-white bg-cyan-600 border border-cyan-700 hover:bg-cyan-700 transition">
+                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Export Excel
+                </button>
+            </form>
+
+            @if (auth()->user()?->isAdmin())
             <form method="POST" action="{{ route('sync') }}">
                 @csrf
                 <button type="submit"
@@ -19,6 +37,7 @@
                     Sync Sekarang
                 </button>
             </form>
+            @endif
         </div>
     </div>
 
@@ -104,7 +123,8 @@
                 <tbody class="divide-y divide-slate-100">
                     @forelse ($shipments as $ship)
                         <tr class="cursor-pointer hover:bg-slate-50 transition"
-                            @click="openDetail('{{ $ship->no_resi }}')">
+                            data-resi="{{ $ship->no_resi }}"
+                            @click="openDetail($el.dataset.resi)">
                             <td class="px-6 py-3.5 font-mono text-slate-700">{{ $ship->no_resi }}</td>
                             <td class="px-6 py-3.5 text-slate-800 font-medium max-w-[220px] truncate">{{ $ship->nama_sekolah }}</td>
                             <td class="px-6 py-3.5 text-slate-600">{{ $ship->provinsi ?? '—' }}</td>
@@ -210,7 +230,7 @@ document.addEventListener('alpine:init', () => {
             this.notFound = false;
             this.data = {};
 
-            fetch('/api/shipments/detail/' + encodeURIComponent(noResi))
+            fetch('/api/shipments/detail?no_resi=' + encodeURIComponent(noResi))
                 .then(r => {
                     if (!r.ok) { this.notFound = true; return null; }
                     return r.json();

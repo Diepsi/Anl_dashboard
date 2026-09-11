@@ -24,7 +24,7 @@ class ShipmentApiController extends Controller
         $provinsi = $request->query('provinsi');
 
         if (! $provinsi) {
-            return response()->json([], 422);
+            return response()->json(['message' => 'Parameter provinsi wajib diisi.'], 422);
         }
 
         $shipments = Shipment::query()
@@ -38,8 +38,14 @@ class ShipmentApiController extends Controller
         return response()->json($shipments);
     }
 
-    public function detail(Request $request, string $noResi)
+    public function detail(Request $request)
     {
+        $noResi = (string) $request->query('no_resi', '');
+
+        if ($noResi === '') {
+            return response()->json(['message' => 'Parameter no_resi wajib diisi.'], 422);
+        }
+
         $shipment = Shipment::query()
             ->where('no_resi', $noResi)
             ->first();

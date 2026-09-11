@@ -70,7 +70,7 @@
                 </div>
 
                 <p class="mt-5 text-center text-xs text-slate-400">
-                    Demo: <span class="font-mono text-slate-500">admin@anl.com</span> / <span class="font-mono text-slate-500">password</span>
+                    Akun dibuat melalui seeder atau manajemen user oleh administrator.
                 </p>
             </div>
         </div>

@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\Shipment;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use SplFileObject;
 
@@ -45,11 +47,11 @@ class ShipmentSyncService
 
     public const SOURCE_FINGERPRINT_CACHE_KEY = 'shipments.source_fingerprint';
 
-    public function lastSyncedAt(): ?\Illuminate\Support\Carbon
+    public function lastSyncedAt(): ?Carbon
     {
         $value = Cache::get(self::LAST_SYNC_CACHE_KEY);
 
-        return $value ? \Illuminate\Support\Carbon::parse($value) : null;
+        return $value ? Carbon::parse($value) : null;
     }
 
     public function sourceStats(): ?array
@@ -84,7 +86,7 @@ class ShipmentSyncService
         file_put_contents($temp, $response->body());
 
         try {
-            $result = $this->importFromFile($temp, $replace);
+            $result = DB::transaction(fn () => $this->importFromFile($temp, $replace));
             $count = $result['imported'];
         } finally {
             @unlink($temp);
@@ -132,7 +134,7 @@ class ShipmentSyncService
         }
 
         if ($replace) {
-            Shipment::query()->truncate();
+            Shipment::query()->delete();
         }
 
         $chunks = [];
@@ -294,10 +296,6 @@ class ShipmentSyncService
     {
         if ($value === null || trim((string) $value) === '') {
             return null;
-        }
-
-        if ($value === 'TRUE' || $value === 'FALSE') {
-            return $value === 'TRUE' ? 'true' : null;
         }
 
         return (string) $value;

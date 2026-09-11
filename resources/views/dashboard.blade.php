@@ -62,16 +62,18 @@
                     </a>
                 @endforeach
             </div>
-            <form method="POST" action="{{ route('sync') }}">
-                @csrf
-                <button type="submit"
-                    class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 transition">
-                    <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                    </svg>
-                    Sync Sekarang
-                </button>
-            </form>
+            @if (auth()->user()?->isAdmin())
+                <form method="POST" action="{{ route('sync') }}">
+                    @csrf
+                    <button type="submit"
+                        class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 transition">
+                        <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                        Sync Sekarang
+                    </button>
+                </form>
+            @endif
             <div class="px-3 py-1.5 rounded-lg text-xs text-slate-500 bg-white border border-slate-200">
                 Terakhir sync:
                 <span class="font-semibold text-slate-700">{{ $lastSync?->format('d M Y H:i') ?? '—' }}</span>
@@ -165,7 +167,7 @@
     @endif
 
     {{-- KPI Cards --}}
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 xl:gap-5 stagger-ready">
+    <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 xl:gap-5 stagger-ready">
 
         {{-- Total Shipments --}}
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-blue-800 p-5">
@@ -174,6 +176,15 @@
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Total Shipments</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($totalShipment, 0, ',', '.') }}</p>
                     <p class="mt-1 text-xs text-slate-400">Total keseluruhan resi</p>
+                    <div class="mt-3">
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="text-slate-500 font-medium">Completion</span>
+                            <span class="font-bold text-emerald-600">{{ $completionRate }}%</span>
+                        </div>
+                        <div class="mt-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                            <div class="h-full rounded-full bg-emerald-500 transition-all" style="width: {{ $completionRate }}%"></div>
+                        </div>
+                    </div>
                 </div>
                 <div class="p-2.5 rounded-lg bg-blue-800/10 shrink-0">
                     <svg class="w-6 h-6 text-blue-800" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -238,6 +249,7 @@
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Undelivered</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($undeliveredCount, 0, ',', '.') }}</p>
                     <p class="mt-1 text-xs text-slate-400">Gagal terkirim / kembali</p>
+                    <p class="mt-1 text-xs font-bold text-red-600">{{ $undeliveredRate }}% dari total kiriman</p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-red-500/10 shrink-0">
                     <svg class="w-6 h-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -300,6 +312,28 @@
                 </div>
             </div>
         </div>
+
+        {{-- Rata-rata Durasi --}}
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-cyan-600 p-5">
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Rata-rata Durasi</p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">
+                        @if ($avgLeadTime > 0)
+                            {{ number_format($avgLeadTime, 1, ',', '.') }}<span class="text-lg text-slate-400 font-semibold"> hari</span>
+                        @else
+                            <span class="text-2xl text-slate-300">—</span>
+                        @endif
+                    </p>
+                    <p class="mt-1 text-xs text-slate-400">Manifest → selesai (Completed)</p>
+                </div>
+                <div class="p-2.5 rounded-lg bg-cyan-600/10 shrink-0">
+                    <svg class="w-6 h-6 text-cyan-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                </div>
+            </div>
+        </div>
     </div>
 
     {{-- Combo Chart --}}
@@ -307,7 +341,7 @@
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
             <div>
                 <h2 class="text-lg font-bold text-slate-900">Tren Pengiriman Daily</h2>
-                <p class="text-sm text-slate-500">Volume kirim & selesai per hari — combo bar + tren garis</p>
+                <p class="text-sm text-slate-500">Volume kirim, selesai, & kepatuhan SLA per hari</p>
             </div>
             <div class="flex items-center gap-1 p-1 rounded-lg bg-slate-100">
                 @foreach ([0 => 'All', 30 => '30 Hari', 90 => '90 Hari'] as $r => $label)
@@ -402,6 +436,47 @@
             <div class="h-[320px]">
                 <canvas id="vendorChart"></canvas>
             </div>
+        </div>
+    </div>
+
+    {{-- Kinerja Vendor --}}
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden stagger-ready">
+        <div class="px-6 py-5 border-b border-slate-200">
+            <h2 class="text-lg font-bold text-slate-900">Kinerja Vendor</h2>
+            <p class="text-sm text-slate-500">5 vendor teratas — kualitas on-time (SLA), rata-rata durasi kirim, & aging</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                        <th class="px-6 py-3 font-semibold">Vendor LM</th>
+                        <th class="px-6 py-3 font-semibold">Total Resi</th>
+                        <th class="px-6 py-3 font-semibold">On-Time (SLA)</th>
+                        <th class="px-6 py-3 font-semibold">Rata-rata Durasi</th>
+                        <th class="px-6 py-3 font-semibold">Rata-rata Aging</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @forelse ($vendorStats as $v)
+                        <tr class="hover:bg-slate-50 transition">
+                            <td class="px-6 py-3.5 font-semibold text-slate-800">{{ $v['vendor'] }}</td>
+                            <td class="px-6 py-3.5 text-slate-600">{{ number_format($v['total'], 0, ',', '.') }}</td>
+                            <td class="px-6 py-3.5">
+                                <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
+                                    {{ $v['onTimePct'] >= 80 ? 'bg-emerald-100 text-emerald-700' : ($v['onTimePct'] >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700') }}">
+                                    {{ $v['onTimePct'] }}%
+                                </span>
+                            </td>
+                            <td class="px-6 py-3.5 text-slate-600">{{ $v['avgLead'] !== null ? number_format($v['avgLead'], 1, ',', '.') . ' hari' : '—' }}</td>
+                            <td class="px-6 py-3.5 text-slate-600">{{ $v['avgAging'] !== null ? number_format($v['avgAging'], 1, ',', '.') . ' hari' : '—' }}</td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="5" class="px-6 py-10 text-center text-slate-400">Belum ada data vendor.</td>
+                        </tr>
+                    @endforelse
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -825,6 +900,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const trendKirim = @json($chartData->pluck('volume_kirim')->map(fn ($v) => (int) $v)->values());
     const trendSelesai = @json($chartData->pluck('volume_selesai')->map(fn ($v) => (int) $v)->values());
     const trendOutSla = @json($chartData->map(fn ($d) => (int) ($outSlaDaily[$d->tanggal]->volume_out ?? 0))->values());
+    const trendCompliance = @json($chartData->map(function ($d) use ($slaComplianceDaily) {
+        $row = $slaComplianceDaily[$d->tanggal] ?? null;
+        if (! $row || (int) $row->total <= 0) return null;
+        return (int) round(((int) $row->meet / (int) $row->total) * 100);
+    })->values());
 
     if (trendLabels.length) {
         renderChart('trendChart', {
@@ -835,9 +915,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     { type: 'bar', label: 'Volume Kirim', data: trendKirim, backgroundColor: 'rgba(8,145,178,0.75)', borderRadius: 3 },
                     { type: 'line', label: 'Volume Selesai', data: trendSelesai, borderColor: '#1d4ed8', backgroundColor: '#1d4ed8', borderWidth: 2, tension: 0.3, pointRadius: 2 },
                     { type: 'line', label: 'Out SLA', data: trendOutSla, borderColor: '#dc2626', backgroundColor: '#dc2626', borderWidth: 2, borderDash: [6, 4], tension: 0.3, pointRadius: 2 },
+                    { type: 'line', yAxisID: 'y1', label: 'SLA Compliance %', data: trendCompliance, borderColor: '#16a34a', backgroundColor: '#16a34a', borderWidth: 2, tension: 0.3, pointRadius: 2 },
                 ],
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } }, y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%', precision: 0 } } } },
         });
     }
 
@@ -906,7 +987,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const bastLabels = @json($bastBalikStats->keys()->values());
     const bastData = @json($bastBalikStats->values());
-    const bastColors = ['#10b981', '#f59e0b', '#94a3b8', '#3b82f6', '#a855f7'];
+    const bastColors = ['#10b981', '#f59e0b', '#94a3b8', '#3b82f6', '#a855f7', '#64748b'];
+    const bastColorAt = (i) => bastColors[i] || '#cbd5e1';
 
     renderChart('bastChart', {
         type: 'doughnut',
@@ -914,7 +996,7 @@ document.addEventListener('DOMContentLoaded', () => {
             labels: bastLabels,
             datasets: [{
                 data: bastData,
-                backgroundColor: bastColors.slice(0, bastLabels.length),
+                backgroundColor: bastLabels.map((_, i) => bastColorAt(i)),
                 borderWidth: 2,
                 borderColor: '#ffffff',
             }],

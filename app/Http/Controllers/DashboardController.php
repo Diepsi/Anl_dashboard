@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Shipment;
 use App\Services\ShipmentSyncService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class DashboardController extends Controller
 {
@@ -19,8 +20,6 @@ class DashboardController extends Controller
         $base = Shipment::query()->inRange($range);
 
         $activeStatuses = ['On Process', 'On Process Delivery', 'Dikirim', 'On Delivery', 'Undelivered', 'Hold'];
-
-        $totalShipment = $base->clone()->count();
 
         $totalShipment = $base->clone()->count();
 
@@ -50,6 +49,16 @@ class DashboardController extends Controller
 
         $outSlaDone = $overSla - $outSlaActive;
 
+        $completionRate = $totalShipment > 0 ? round(($completed / $totalShipment) * 100) : 0;
+        $undeliveredRate = $totalShipment > 0 ? round(($undeliveredCount / $totalShipment) * 100) : 0;
+
+        $avgLeadTime = round((float) ($base->clone()
+            ->whereNotNull('completed_date')
+            ->whereNotNull('tanggal_manifest')
+            ->where('status_akhir', 'Completed')
+            ->selectRaw('AVG(DATEDIFF(completed_date, tanggal_manifest)) as avg_lead')
+            ->value('avg_lead') ?? 0), 1);
+
         $statusBreakdown = $base->clone()
             ->selectRaw('status_akhir, COUNT(*) as total')
             ->groupBy('status_akhir')
@@ -73,6 +82,7 @@ class DashboardController extends Controller
         ])->filter(fn ($total) => $total > 0);
 
         $chartData = $base->clone()
+            ->whereNotNull('tanggal_manifest')
             ->selectRaw('DATE(tanggal_manifest) as tanggal')
             ->selectRaw('COUNT(*) as volume_kirim')
             ->selectRaw('SUM(CASE WHEN status_akhir = "Completed" THEN 1 ELSE 0 END) as volume_selesai')
@@ -81,9 +91,20 @@ class DashboardController extends Controller
             ->get();
 
         $outSlaDaily = $base->clone()
+            ->whereNotNull('tanggal_manifest')
             ->selectRaw('DATE(tanggal_manifest) as tanggal')
             ->selectRaw('COUNT(*) as volume_out')
             ->where('sla_result', 'Out SLA')
+            ->groupByRaw('DATE(tanggal_manifest)')
+            ->orderBy('tanggal')
+            ->get()
+            ->keyBy('tanggal');
+
+        $slaComplianceDaily = $base->clone()
+            ->whereNotNull('tanggal_manifest')
+            ->selectRaw('DATE(tanggal_manifest) as tanggal')
+            ->selectRaw('SUM(CASE WHEN sla_result = "Meet SLA" THEN 1 ELSE 0 END) as meet')
+            ->selectRaw('COUNT(CASE WHEN sla_result IS NOT NULL THEN 1 END) as total')
             ->groupByRaw('DATE(tanggal_manifest)')
             ->orderBy('tanggal')
             ->get()
@@ -146,14 +167,40 @@ class DashboardController extends Controller
             $topVendors->put('Lainnya', $otherVendorCount);
         }
 
-        $latestManifest = \Illuminate\Support\Carbon::parse(Shipment::query()->max('tanggal_manifest'));
-        $earliestManifest = \Illuminate\Support\Carbon::parse(Shipment::query()->min('tanggal_manifest'));
+        $vendorStats = $base->clone()
+            ->whereNotNull('vendor_lm')
+            ->where('vendor_lm', '!=', '')
+            ->selectRaw('vendor_lm')
+            ->selectRaw('COUNT(*) as total')
+            ->selectRaw('SUM(CASE WHEN sla_result = "Meet SLA" THEN 1 ELSE 0 END) as meet')
+            ->selectRaw('AVG(DATEDIFF(completed_date, tanggal_manifest)) as avg_lead')
+            ->selectRaw('AVG(aging) as avg_aging')
+            ->groupBy('vendor_lm')
+            ->orderByDesc('total')
+            ->limit(5)
+            ->get()
+            ->map(fn ($r) => [
+                'vendor' => $r->vendor_lm,
+                'total' => (int) $r->total,
+                'onTimePct' => $r->total > 0 ? round(((int) $r->meet / (int) $r->total) * 100) : 0,
+                'avgLead' => $r->avg_lead !== null ? round((float) $r->avg_lead, 1) : null,
+                'avgAging' => $r->avg_aging !== null ? round((float) $r->avg_aging, 1) : null,
+            ]);
+
+        $latestRawDate = Shipment::query()->max('tanggal_manifest');
+        $earliestRawDate = Shipment::query()->min('tanggal_manifest');
+
+        $latestManifest = $latestRawDate ? Carbon::parse($latestRawDate) : null;
+        $earliestManifest = $earliestRawDate ? Carbon::parse($earliestRawDate) : null;
 
         $recentShipments = $base->clone()
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(8)
             ->get();
+
+        $rangeLatestRaw = $base->clone()->max('tanggal_manifest');
+        $agingAnchor = $rangeLatestRaw ? Carbon::parse($rangeLatestRaw)->toDateString() : Carbon::today()->toDateString();
 
         $agingBuckets = collect([
             '≤ 7 hari' => 0,
@@ -166,9 +213,9 @@ class DashboardController extends Controller
             ->whereIn('status_akhir', $activeStatuses)
             ->whereNotNull('tanggal_manifest')
             ->selectRaw('CASE
-                WHEN DATEDIFF(CURDATE(), DATE(tanggal_manifest)) <= 7 THEN "≤ 7 hari"
-                WHEN DATEDIFF(CURDATE(), DATE(tanggal_manifest)) <= 14 THEN "8–14 hari"
-                WHEN DATEDIFF(CURDATE(), DATE(tanggal_manifest)) <= 30 THEN "15–30 hari"
+                WHEN DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) <= 7 THEN "≤ 7 hari"
+                WHEN DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) <= 14 THEN "8–14 hari"
+                WHEN DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) <= 30 THEN "15–30 hari"
                 ELSE "> 30 hari"
               END as bucket')
             ->selectRaw('COUNT(*) as total')
@@ -183,10 +230,10 @@ class DashboardController extends Controller
 
         $attentionShipments = $base->clone()
             ->whereIn('status_akhir', $activeStatuses)
-            ->selectRaw('*, DATEDIFF(CURDATE(), DATE(tanggal_manifest)) as days_open')
-            ->where(function ($q) {
+            ->selectRaw('*, DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) as days_open')
+            ->where(function ($q) use ($agingAnchor) {
                 $q->whereIn('status_akhir', ['Hold', 'Undelivered'])
-                    ->orWhereRaw('DATEDIFF(CURDATE(), DATE(tanggal_manifest)) >= 14');
+                    ->orWhereRaw('DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) >= 14');
             })
             ->orderByRaw('COALESCE(days_open, 0) DESC')
             ->orderBy('id', 'desc')
@@ -209,15 +256,20 @@ class DashboardController extends Controller
             'slaPct',
             'outSlaActive',
             'outSlaDone',
+            'completionRate',
+            'undeliveredRate',
+            'avgLeadTime',
             'statusBreakdown',
             'bastBalikStats',
             'bastFinanceStats',
             'chartData',
             'outSlaDaily',
+            'slaComplianceDaily',
             'staggingList',
             'bottleneckStats',
             'topProvinces',
             'topVendors',
+            'vendorStats',
             'latestManifest',
             'earliestManifest',
             'recentShipments',
@@ -231,12 +283,15 @@ class DashboardController extends Controller
 
     protected function mapBastKeterangan(string $status): string
     {
-        return match ($status) {
-            'ACTUAL BAST SUDAH DITERIMA' => 'Sudah Diterima',
-            'BAST BELUM DITERIMA' => 'Belum Diterima',
-            'SEKOLAH TIDAK BEROPERASI LAGI' => 'Sekolah Tidak Beroperasi',
-            'RELOKASI' => 'Relokasi',
-            default => 'Belum Terdata',
+        $normalized = mb_strtoupper(trim($status));
+
+        return match (true) {
+            str_contains($normalized, 'SUDAH DITERIMA'), str_contains($normalized, 'BAST DITERIMA') => 'Sudah Diterima',
+            str_contains($normalized, 'BELUM DITERIMA') => 'Belum Diterima',
+            str_contains($normalized, 'BELUM TERDATA') => 'Belum Terdata',
+            str_contains($normalized, 'TIDAK BEROPERASI') => 'Sekolah Tidak Beroperasi',
+            str_contains($normalized, 'RELOKASI') => 'Relokasi',
+            default => 'Lainnya',
         };
     }
 }

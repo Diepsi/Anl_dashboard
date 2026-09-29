@@ -8,4 +8,6 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Schedule::command('shipments:sync')->hourly();
+Schedule::command('shipments:sync')
+    ->hourly()
+    ->onSuccess(fn () => Artisan::call('analytics:run-clustering'));

@@ -39,4 +39,10 @@ return [
         'csv_url' => env('GOOGLE_SHEETS_CSV_URL'),
     ],
 
+    'python' => [
+        'bin' => env('PYTHON_BIN', 'python'),
+        'timeout' => (int) env('PYTHON_TIMEOUT', 120),
+        'script' => base_path('app/Console/Scripts/clustering.py'),
+    ],
+
 ];

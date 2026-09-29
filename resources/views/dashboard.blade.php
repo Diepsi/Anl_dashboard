@@ -95,13 +95,15 @@
 
     @if ($sourceStats)
         @php
+            $sourceRows = (int) ($sourceStats['imported_rows'] ?? $sourceStats['raw_rows'] ?? $dbTotal);
             $validRows = (int) $sourceStats['valid_rows'];
             $dupExtra = (int) $sourceStats['dup_extra'];
             $skippedEmpty = (int) $sourceStats['skipped_empty'];
             $skippedMalformed = (int) ($sourceStats['skipped_malformed'] ?? 0);
+            $noResiRows = $skippedEmpty + $skippedMalformed;
             $malformedResi = $sourceStats['malformed_resi'] ?? [];
             $duplicates = $sourceStats['duplicates'] ?? [];
-            $diff = $validRows - $dbTotal;
+            $diff = $sourceRows - $dbTotal;
         @endphp
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -111,9 +113,9 @@
                     </svg>
                 </div>
                 <div class="text-sm text-slate-600">
-                    Sumber GSheet: <span class="font-bold text-slate-900">{{ number_format($validRows, 0, ',', '.') }}</span> resi
+                    Sumber GSheet: <span class="font-bold text-slate-900">{{ number_format($sourceRows, 0, ',', '.') }}</span> baris
                     <span class="mx-1 text-slate-300">·</span>
-                    Database: <span class="font-bold text-slate-900">{{ number_format($dbTotal, 0, ',', '.') }}</span> resi
+                    Database: <span class="font-bold text-slate-900">{{ number_format($dbTotal, 0, ',', '.') }}</span> baris
                 </div>
                 @if ($diff === 0)
                     <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
@@ -131,30 +133,26 @@
                     </span>
                 @endif
             </div>
-            @if ($diff !== 0 || $skippedEmpty > 0)
+            @if ($diff !== 0 || $dupExtra > 0 || $noResiRows > 0)
                 <p class="mt-2 text-xs text-slate-500 leading-relaxed">
-                    @if ($diff > 0)
-                        Ada {{ number_format($diff, 0, ',', '.') }} baris dengan <span class="font-semibold text-amber-700">no_resi duplikat</span> di GSheet —
-                        tiap nomor resi disimpan sekali, yaitu data terbaru dari baris terbawah.
-                    @elseif ($diff < 0)
-                        Database menyimpan {{ number_format(abs($diff), 0, ',', '.') }} resi lebih banyak —
-                        riwayat dari sinkronisasi sebelumnya tidak dihapus.
-                    @endif
-                    @if ($skippedEmpty > 0)
-                        @if ($diff !== 0)
+                    @if ($diff !== 0)
+                        Database menyimpan {{ number_format(abs($diff), 0, ',', '.') }} baris yang tidak ada di sumber saat ini —
+                        sisa dari sinkronisasi sebelumnya. Gunakan <span class="font-semibold">--replace</span> untuk menyamakannya.
+                        @if ($dupExtra > 0 || $noResiRows > 0)
                             ·
-                        @else
-                            &
                         @endif
-                        {{ $skippedEmpty }} baris tanpa No Resi diabaikan.
                     @endif
-                    @if ($skippedMalformed > 0)
-            @if ($diff !== 0 || $skippedEmpty > 0 || $skippedMalformed > 0)
+                    @if ($dupExtra > 0)
+                        {{ number_format($dupExtra, 0, ',', '.') }} baris berbagi <span class="font-semibold text-amber-700">no resi</span> dengan baris lain —
+                        semuanya disimpan dan ditandai
+                        <span class="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700">duplikat</span>.
+                        @if ($noResiRows > 0)
                             ·
-                        @else
-                            &
                         @endif
-                        {{ number_format($skippedMalformed, 0, ',', '.') }} baris dengan <span class="font-semibold text-red-700">No Resi tidak valid</span> ditolak, tidak dihitung sebagai pengiriman.
+                    @endif
+                    @if ($noResiRows > 0)
+                        {{ number_format($noResiRows, 0, ',', '.') }} baris tanpa No Resi yang valid ikut disimpan dan ditampilkan sebagai
+                        <span class="font-mono text-slate-700">—</span>.
                     @endif
                 </p>
             @endif
@@ -626,7 +624,7 @@
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 stagger-ready">
         <div class="mb-4">
             <h2 class="text-lg font-bold text-slate-900">Perlu Perhatian</h2>
-            <p class="text-sm text-slate-500">Pengiriman belum selesai yang perlu follow-up — Hold/Undelivered, atau usia ≥ 14 hari dari tanggal manifest terakhir</p>
+            <p class="text-sm text-slate-500">Pengiriman belum selesai yang perlu follow-up — Hold/Undelivered/Retur, atau usia ≥ 14 hari dari tanggal manifest terakhir</p>
         </div>
 
         @php
@@ -647,6 +645,14 @@
             @endforeach
         </div>
 
+        @if ($agingExcluded > 0)
+            <p class="mt-3 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                <span class="font-semibold text-slate-700">{{ number_format($agingExcluded) }} resi aktif</span>
+                (termasuk {{ number_format($returCount) }} Retur) tidak masuk tabel usia di atas karena sumber
+                tidak memuat tanggal HO ke Vendor. Usia tidak dapat dihitung — sengaja ditampilkan kosong, bukan 0.
+            </p>
+        @endif
+
         @if ($attentionShipments->isNotEmpty())
             <div class="mt-4 overflow-x-auto">
                 <table class="w-full text-left text-sm">
@@ -664,7 +670,12 @@
                     <tbody class="divide-y divide-slate-100">
                         @foreach ($attentionShipments as $ship)
                             <tr class="hover:bg-slate-50 transition">
-                                <td class="px-4 py-3 font-mono text-slate-700 whitespace-nowrap">{{ $ship->no_resi }}</td>
+                                <td class="px-4 py-3 font-mono text-slate-700 whitespace-nowrap">
+                                    {{ $ship->no_resi ?? '—' }}
+                                    @if ($ship->is_duplicate_no_resi)
+                                        <span class="ml-1 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700">duplikat</span>
+                                    @endif
+                                </td>
                                 <td class="px-4 py-3 text-slate-800 font-medium max-w-[200px] truncate">{{ $ship->nama_sekolah }}</td>
                                 <td class="px-4 py-3 text-slate-600">{{ $ship->provinsi ?? '—' }}</td>
                                 <td class="px-4 py-3">
@@ -674,6 +685,7 @@
                                             'On Delivery' => 'bg-blue-100 text-blue-700',
                                             'Undelivered' => 'bg-red-100 text-red-700',
                                             'Hold' => 'bg-orange-100 text-orange-700',
+                                            'Retur' => 'bg-fuchsia-100 text-fuchsia-700',
                                             default => 'bg-slate-100 text-slate-600',
                                         } }}">
                                         {{ $ship->status_akhir }}
@@ -687,9 +699,14 @@
                                     </span>
                                 </td>
                                 <td class="px-4 py-3">
+                                    @php
+                                        $verdict = $ship->sla_verdict;
+                                    @endphp
                                     <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
-                                        {{ $ship->sla_result === 'Out SLA' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200' }}">
-                                        {{ $ship->sla_result ?? '—' }}
+                                        @if ($verdict === 'Out SLA') bg-red-50 text-red-600 border border-red-200
+                                        @elseif ($verdict === 'Meet SLA') bg-emerald-50 text-emerald-600 border border-emerald-200
+                                        @else bg-slate-100 text-slate-500 border border-slate-200 @endif">
+                                        {{ $verdict ?? 'Tidak terverifikasi' }}
                                     </span>
                                 </td>
                             </tr>
@@ -744,7 +761,12 @@
                 <tbody class="divide-y divide-slate-100">
                     @forelse ($recentShipments as $ship)
                         <tr class="hover:bg-slate-50 transition">
-                            <td class="px-6 py-3.5 font-mono text-slate-700">{{ $ship->no_resi }}</td>
+                            <td class="px-6 py-3.5 font-mono text-slate-700 whitespace-nowrap">
+                                {{ $ship->no_resi ?? '—' }}
+                                @if ($ship->is_duplicate_no_resi)
+                                    <span class="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700">duplikat</span>
+                                @endif
+                            </td>
                             <td class="px-6 py-3.5 text-slate-800 font-medium max-w-[200px] truncate">{{ $ship->nama_sekolah }}</td>
                             <td class="px-6 py-3.5 text-slate-600">{{ $ship->provinsi ?? '—' }}</td>
                             <td class="px-6 py-3.5 text-slate-600">{{ $ship->stagging ?? '—' }}</td>
@@ -769,9 +791,14 @@
                                 </span>
                             </td>
                             <td class="px-6 py-3.5">
+                                @php $verdict = $ship->sla_verdict; @endphp
                                 <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
-                                    {{ $ship->sla_result === 'Out SLA' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200' }}">
-                                    {{ $ship->sla_result ?? '—' }}
+                                    {{ match ($verdict) {
+                                        'Out SLA' => 'bg-red-50 text-red-600 border border-red-200',
+                                        'Meet SLA' => 'bg-emerald-50 text-emerald-600 border border-emerald-200',
+                                        default => 'bg-slate-100 text-slate-500 border border-slate-200',
+                                    } }}">
+                                    {{ $verdict ?? 'Tidak terverifikasi' }}
                                 </span>
                             </td>
                         </tr>
@@ -821,7 +848,10 @@
                     <tbody class="divide-y divide-slate-100">
                         <template x-for="row in modalRows" :key="row.no_resi">
                             <tr class="hover:bg-slate-50">
-                                <td class="px-6 py-3 font-mono text-slate-700 whitespace-nowrap" x-text="row.no_resi"></td>
+                                <td class="px-6 py-3 font-mono text-slate-700 whitespace-nowrap">
+                                    <span x-text="row.no_resi || '—'"></span>
+                                    <span x-show="row.is_duplicate_no_resi" class="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700">duplikat</span>
+                                </td>
                                 <td class="px-6 py-3 text-slate-800 font-medium max-w-[260px] truncate" x-text="row.nama_sekolah"></td>
                                 <td class="px-6 py-3 text-slate-600" x-text="row.provinsi ?? '—'"></td>
                                 <td class="px-6 py-3 text-slate-600" x-text="row.kota_kabupaten ?? '—'"></td>
@@ -832,8 +862,8 @@
                                 </td>
                                 <td class="px-6 py-3">
                                     <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold"
-                                          :class="row.sla_result === 'Out SLA' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'"
-                                          x-text="row.sla_result ?? '—'"></span>
+                                          :class="slaBadgeClass(row.sla_due_date, row.completed_date)"
+                                          x-text="slaBadgeLabel(row.sla_due_date, row.completed_date)"></span>
                                 </td>
                             </tr>
                         </template>
@@ -929,21 +959,53 @@ document.addEventListener('alpine:init', () => {
                 'On Delivery': 'bg-blue-100 text-blue-700',
                 'Undelivered': 'bg-red-100 text-red-700',
                 'Hold': 'bg-orange-100 text-orange-700',
+                'Retur': 'bg-fuchsia-100 text-fuchsia-700',
             }[status] || 'bg-slate-100 text-slate-600';
+        },
+        // Verdict dihitung ulang di browser dengan aturan yang sama persis seperti
+        // scopeOutSla()/scopeMeetSla() di server: selesai pada atau sebelum batas
+        // SLA berarti Meet. Tanpa kedua tanggal, baris tidak bisa dinilai dan harus
+        // tampil abu-abu, bukan hijau karena sumbernya menulis "Meet SLA".
+        slaVerifiable(due, completed) {
+            return due !== null && due !== undefined && due !== ''
+                && completed !== null && completed !== undefined && completed !== '';
+        },
+        slaVerdict(due, completed) {
+            if (!this.slaVerifiable(due, completed)) {
+                return null;
+            }
+
+            return String(completed).slice(0, 10) <= String(due).slice(0, 10) ? 'Meet SLA' : 'Out SLA';
+        },
+        slaBadgeClass(due, completed) {
+            const verdict = this.slaVerdict(due, completed);
+
+            if (verdict === 'Out SLA') {
+                return 'bg-red-50 text-red-600 border border-red-200';
+            }
+
+            if (verdict === 'Meet SLA') {
+                return 'bg-emerald-50 text-emerald-600 border border-emerald-200';
+            }
+
+            return 'bg-slate-100 text-slate-500 border border-slate-200';
+        },
+        slaBadgeLabel(due, completed) {
+            return this.slaVerdict(due, completed) ?? 'Tidak terverifikasi';
         },
         openStaging(stage, total) {
             this.loadModal(
                 'Stagging: ' + stage,
                 'Resi yang sedang berada di tahap ini (maks. 50 tampil)',
-                '/api/shipments/staging/' + encodeURIComponent(stage),
+                '/api/shipments/staging/' + encodeURIComponent(stage) + '?range=' + @json($range),
                 Number(total)
             );
         },
         openBottleneck(provinsi, total) {
             this.loadModal(
                 'Over SLA — ' + provinsi,
-                'Resi yang melewati SLA di provinsi ini (maks. 50 tampil)',
-                '/api/shipments/bottleneck?provinsi=' + encodeURIComponent(provinsi),
+                'Resi yang melewati SLA terverifikasi di provinsi ini (maks. 50 tampil)',
+                '/api/shipments/bottleneck?provinsi=' + encodeURIComponent(provinsi) + '&range=' + @json($range),
                 Number(total)
             );
         },

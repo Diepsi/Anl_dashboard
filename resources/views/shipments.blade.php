@@ -122,10 +122,15 @@
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                     @forelse ($shipments as $ship)
-                        <tr class="cursor-pointer hover:bg-slate-50 transition"
+                        <tr class="{{ $ship->no_resi ? 'cursor-pointer hover:bg-slate-50 transition' : '' }}"
                             data-resi="{{ $ship->no_resi }}"
-                            @click="openDetail($el.dataset.resi)">
-                            <td class="px-6 py-3.5 font-mono text-slate-700">{{ $ship->no_resi }}</td>
+                            @if ($ship->no_resi) @click="openDetail($el.dataset.resi)" @endif>
+                            <td class="px-6 py-3.5 font-mono text-slate-700 whitespace-nowrap">
+                                {{ $ship->no_resi ?? '—' }}
+                                @if ($ship->is_duplicate_no_resi)
+                                    <span class="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700" title="No resi ini muncul lebih dari satu kali di sheet">duplikat</span>
+                                @endif
+                            </td>
                             <td class="px-6 py-3.5 text-slate-800 font-medium max-w-[220px] truncate">{{ $ship->nama_sekolah }}</td>
                             <td class="px-6 py-3.5 text-slate-600">{{ $ship->provinsi ?? '—' }}</td>
                             <td class="px-6 py-3.5">
@@ -154,9 +159,12 @@
                                 </span>
                             </td>
                             <td class="px-6 py-3.5">
+                                @php $verdict = $ship->sla_verdict; @endphp
                                 <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
-                                    {{ $ship->sla_result === 'Out SLA' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-600 border border-emerald-200' }}">
-                                    {{ $ship->sla_result ?? '—' }}
+                                    @if ($verdict === 'Out SLA') bg-red-50 text-red-600 border border-red-200
+                                    @elseif ($verdict === 'Meet SLA') bg-emerald-50 text-emerald-600 border border-emerald-200
+                                    @else bg-slate-100 text-slate-500 border border-slate-200 @endif">
+                                    {{ $verdict ?? 'Tidak terverifikasi' }}
                                 </span>
                             </td>
                         </tr>
@@ -187,7 +195,10 @@
         <div class="flex items-start justify-between gap-4 px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
             <div class="min-w-0">
                 <h3 class="text-lg font-bold text-slate-900">Detail Resi</h3>
-                <p class="text-sm text-slate-500 font-mono" x-text="data.no_resi || 'Memuat...'"></p>
+                <p class="text-sm text-slate-500 font-mono" x-text="data.no_resi || '—'"></p>
+                <p x-show="data.is_duplicate_no_resi" class="mt-1 inline-flex px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-700">
+                    No resi ini muncul lebih dari satu kali di sheet
+                </p>
             </div>
             <button @click="open = false" class="p-2 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition shrink-0" aria-label="Tutup">
                 <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
@@ -263,14 +274,18 @@ document.addEventListener('alpine:init', () => {
                 ['Kode Funder', d.kode_funder],
                 ['Nama Funder', d.nama_funder],
                 ['Tanggal Manifest', fmtDate(d.tanggal_manifest)],
+                ['Tgl HO dari SarTrans', fmtDate(d.tgl_ho_sartrans)],
                 ['Completed Date', fmtDate(d.completed_date)],
                 ['Tgl Sampai Kota Tujuan', fmtDate(d.tgl_sampai_kota_tujuan)],
-                ['Aging', d.aging !== null && d.aging !== undefined ? d.aging + ' hari' : null],
+                ['KOLI', d.koli],
                 ['Status Akhir', d.status_akhir],
                 ['Status Instalasi', d.status_instalasi],
                 ['Stagging', d.stagging],
-                ['SLA', d.sla !== null && d.sla !== undefined ? d.sla + ' hari' : null],
-                ['SLA Result', d.sla_result],
+                ['SLA (hari)', d.sla !== null && d.sla !== undefined ? d.sla + ' hari' : null],
+                ['Ambang SLA (hari)', d.sla_threshold_days !== null && d.sla_threshold_days !== undefined ? d.sla_threshold_days + ' hari' : null],
+                ['Batas SLA', fmtDate(d.sla_due_date)],
+                ['Status SLA', d.sla_verdict ?? 'Tidak terverifikasi'],
+                ['Verdict Sheet', d.sla_result],
                 ['Harga Per Shipment', d.harga_per_shipment ? 'Rp ' + Number(d.harga_per_shipment).toLocaleString('id-ID') : null],
                 ['Status Invoice', d.status_invoice],
             ];

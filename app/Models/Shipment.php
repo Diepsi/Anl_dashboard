@@ -9,6 +9,7 @@ class Shipment extends Model
 {
     protected $fillable = [
         'no_resi',
+        'is_duplicate_no_resi',
         'nomor_redock',
         'delivery_order',
         'nama_sekolah',
@@ -26,13 +27,14 @@ class Shipment extends Model
         'koli',
         'completed_date',
         'tgl_sampai_kota_tujuan',
-        'aging',
+        'sla_threshold_days',
         'status_akhir',
         'status_instalasi',
         'harga_per_shipment',
         'status_invoice',
         'stagging',
         'sla',
+        'sla_due_date',
         'sla_result',
         'bast_tgl_balik',
         'bast_tgl_ke_finance',
@@ -40,6 +42,8 @@ class Shipment extends Model
     ];
 
     protected $guarded = ['id'];
+
+    protected $appends = ['sla_verdict'];
 
     protected function casts(): array
     {
@@ -49,12 +53,53 @@ class Shipment extends Model
             'koli' => 'integer',
             'completed_date' => 'date',
             'tgl_sampai_kota_tujuan' => 'date',
-            'aging' => 'integer',
+            'sla_threshold_days' => 'integer',
             'harga_per_shipment' => 'decimal:2',
             'sla' => 'integer',
+            'sla_due_date' => 'date',
             'bast_tgl_balik' => 'date',
             'bast_tgl_ke_finance' => 'date',
+            'is_duplicate_no_resi' => 'boolean',
         ];
+    }
+
+    /**
+     * Verdict SLA dihitung ulang dari `completed_date` terhadap `sla_due_date`,
+     * bukan diambil dari teks verdict di sheet.
+     *
+     * Kolom `SLA` di sumber berisi dua bentuk: BOMA mengisi ambang hari, 31 vendor
+     * lain mengisi tanggal batas. `sla_due_date` sudah menyatukan keduanya saat
+     * sync, jadi satu perbandingan ini berlaku untuk semua vendor. Mengambil
+     * verdict apa adanya dari sheet membuat dashboard ikut 31 baris BOMA yang
+     * sumbernya salah hitung.
+     *
+     * NULL berarti belum bisa diverifikasi, dan itu harus dibedakan dari "Out SLA":
+     * satu baris yang tidak bisa dinilai tidak boleh ikut dihitung sebagai salah. */
+    public function getSlaVerdictAttribute(): ?string
+    {
+        if ($this->sla_due_date === null || $this->completed_date === null) {
+            return null;
+        }
+
+        return $this->completed_date->startOfDay()->lte($this->sla_due_date->startOfDay())
+            ? 'Meet SLA'
+            : 'Out SLA';
+    }
+
+    /** Baris yang punya ambang dan tanggal selesai, jadi verdict-nya bisa dihitung. */
+    public function scopeSlaVerifiable($query)
+    {
+        return $query->whereNotNull('sla_due_date')->whereNotNull('completed_date');
+    }
+
+    public function scopeOutSla($query)
+    {
+        return $query->slaVerifiable()->whereColumn('completed_date', '>', 'sla_due_date');
+    }
+
+    public function scopeMeetSla($query)
+    {
+        return $query->slaVerifiable()->whereColumn('completed_date', '<=', 'sla_due_date');
     }
 
     /**

@@ -19,7 +19,7 @@ class DashboardController extends Controller
 
         $base = Shipment::query()->inRange($range);
 
-        $activeStatuses = ['On Process', 'On Process Delivery', 'Dikirim', 'On Delivery', 'Undelivered', 'Hold'];
+        $activeStatuses = ['On Process', 'On Process Delivery', 'Dikirim', 'On Delivery', 'Undelivered', 'Hold', 'Retur'];
 
         $totalShipment = $base->clone()->count();
 
@@ -30,32 +30,25 @@ class DashboardController extends Controller
         $onDeliveryCount = $base->clone()->where('status_akhir', 'On Delivery')->count();
         $undeliveredCount = $base->clone()->where('status_akhir', 'Undelivered')->count();
         $holdCount = $base->clone()->where('status_akhir', 'Hold')->count();
+        $returCount = $base->clone()->where('status_akhir', 'Retur')->count();
 
-        // Hanya baris yang punya ambang SLA valid (1..365 hari) yang boleh
-        // dihitung on-time. Vendor tanpa ambang terverifikasi (mis. Panthera,
-        // kolomnya berisi serial date) dikeluarkan supaya tidak-create angka
-        // yang terlihat sah padahal tidak bisa dipertanggungjawabkan.
-        $withinSla = $base->clone()
-            ->whereBetween('sla', [1, 365])
-            ->where('sla_result', 'Meet SLA')
-            ->count();
+        // Verdict SLA dihitung ulang dari completed_date vs sla_due_date, bukan
+        // dari teks verdict di sheet. Kolom SLA di sumber berisi dua bentuk (ambang
+        // hari untuk BOMA, tanggal batas untuk vendor lain) dan keduanya sudah
+        // disatukan menjadi sla_due_date saat sync, jadi satu scope ini berlaku
+        // untuk semua vendor. Cakupannya naik dari 10,6% menjadi 99,7%.
+        $withinSla = $base->clone()->meetSla()->count();
 
-        $overSla = $base->clone()
-            ->whereBetween('sla', [1, 365])
-            ->where('sla_result', 'Out SLA')
-            ->count();
+        $overSla = $base->clone()->outSla()->count();
 
-        $slaCovered = $base->clone()
-            ->whereBetween('sla', [1, 365])
-            ->count();
+        $slaCovered = $base->clone()->slaVerifiable()->count();
 
         $slaDenom = $withinSla + $overSla;
         $slaPct = $slaDenom > 0 ? round(($withinSla / $slaDenom) * 100) : null;
         $slaUnverified = $totalShipment - $slaCovered;
 
         $outSlaActive = $base->clone()
-            ->whereBetween('sla', [1, 365])
-            ->where('sla_result', 'Out SLA')
+            ->outSla()
             ->where('status_akhir', '!=', 'Completed')
             ->count();
 
@@ -104,10 +97,9 @@ class DashboardController extends Controller
         $outSlaDaily = $base->clone()
             ->withConsistentDates()
             ->whereNotNull('tanggal_manifest')
-            ->whereBetween('sla', [1, 365])
+            ->outSla()
             ->selectRaw('DATE(tanggal_manifest) as tanggal')
             ->selectRaw('COUNT(*) as volume_out')
-            ->where('sla_result', 'Out SLA')
             ->groupByRaw('DATE(tanggal_manifest)')
             ->orderBy('tanggal')
             ->get()
@@ -116,9 +108,9 @@ class DashboardController extends Controller
         $slaComplianceDaily = $base->clone()
             ->withConsistentDates()
             ->whereNotNull('tanggal_manifest')
-            ->whereBetween('sla', [1, 365])
+            ->slaVerifiable()
             ->selectRaw('DATE(tanggal_manifest) as tanggal')
-            ->selectRaw('SUM(CASE WHEN sla_result = "Meet SLA" THEN 1 ELSE 0 END) as meet')
+            ->selectRaw('SUM(CASE WHEN completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet')
             ->selectRaw('COUNT(*) as total')
             ->groupByRaw('DATE(tanggal_manifest)')
             ->orderBy('tanggal')
@@ -153,8 +145,7 @@ class DashboardController extends Controller
 
         $bottleneckStats = $base->clone()
             ->selectRaw('provinsi, COUNT(*) as total')
-            ->whereBetween('sla', [1, 365])
-            ->where('sla_result', 'Out SLA')
+            ->outSla()
             ->whereNotNull('provinsi')
             ->groupBy('provinsi')
             ->orderByDesc('total')
@@ -190,8 +181,8 @@ class DashboardController extends Controller
             ->where('vendor_lm', '!=', '')
             ->selectRaw('vendor_lm')
             ->selectRaw('COUNT(*) as total')
-            ->selectRaw('SUM(CASE WHEN sla BETWEEN 1 AND 365 THEN 1 ELSE 0 END) as sla_covered')
-            ->selectRaw('SUM(CASE WHEN sla BETWEEN 1 AND 365 AND sla_result = "Meet SLA" THEN 1 ELSE 0 END) as meet')
+            ->selectRaw('SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL THEN 1 ELSE 0 END) as sla_covered')
+            ->selectRaw('SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL AND completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet')
             ->groupBy('vendor_lm')
             ->orderByDesc('total')
             ->limit(5)
@@ -257,18 +248,35 @@ class DashboardController extends Controller
             }
         }
 
+        $agingExcluded = $base->clone()
+            ->withConsistentDates()
+            ->whereIn('status_akhir', $activeStatuses)
+            ->whereNull('tanggal_manifest')
+            ->count();
+
         $attentionShipments = $base->clone()
             ->withConsistentDates()
             ->whereIn('status_akhir', $activeStatuses)
-            ->whereNotNull('tanggal_manifest')
             ->selectRaw('*, DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) as days_open')
             ->where(function ($q) use ($agingAnchor) {
-                $q->whereIn('status_akhir', ['Hold', 'Undelivered'])
-                    ->orWhereRaw('DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) >= 14');
+                // Status bermasalah masuk tanpa syarat tanggal: Retur (6 resi) tidak punya
+                // tanggal HO ke Vendor sama sekali, jadi REQUIRE tanggal di luar cabang
+                // ini akan membuangnya diam-diam. Ambang usia hanya berlaku untuk baris
+                // yang memang punya tanggal, dan sisanya tampil dengan usia "—".
+                //
+                // Baris status-bermasalah didahulukan: kalau hanya diurutkan usia, Retur
+                // punya days_open NULL dan akan selalu tersingkir paling akhir oleh
+                // On Delivery yang sudah tua — persis baris yang tidak boleh hilang.
+                $q->whereIn('status_akhir', ['Hold', 'Undelivered', 'Retur'])
+                    ->orWhere(function ($q2) use ($agingAnchor) {
+                        $q2->whereNotNull('tanggal_manifest')
+                            ->whereRaw('DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) >= 14');
+                    });
             })
+            ->orderByRaw('CASE WHEN status_akhir IN ("Hold", "Undelivered", "Retur") THEN 0 ELSE 1 END')
             ->orderByRaw('COALESCE(days_open, 0) DESC')
             ->orderBy('id', 'desc')
-            ->limit(10)
+            ->limit(25)
             ->get();
 
         $lastSync = $service->lastSyncedAt();
@@ -282,6 +290,7 @@ class DashboardController extends Controller
             'onDeliveryCount',
             'undeliveredCount',
             'holdCount',
+            'returCount',
             'withinSla',
             'overSla',
             'slaPct',
@@ -309,6 +318,7 @@ class DashboardController extends Controller
             'earliestManifest',
             'recentShipments',
             'agingBuckets',
+            'agingExcluded',
             'attentionShipments',
             'lastSync',
             'sourceStats',

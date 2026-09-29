@@ -69,6 +69,7 @@ class ShipmentsController extends Controller
 
         $columns = [
             'no_resi' => 'No Resi',
+            'is_duplicate_no_resi' => 'Duplikat Resi',
             'nomor_redock' => 'Nomor Redock',
             'delivery_order' => 'Delivery Order',
             'nama_sekolah' => 'Nama Sekolah',
@@ -82,16 +83,20 @@ class ShipmentsController extends Controller
             'nama_funder' => 'Nama Funder',
             'vendor_lm' => 'Vendor LM',
             'tanggal_manifest' => 'Tanggal Manifest',
+            'tgl_ho_sartrans' => 'Tgl HO dari SarTrans',
             'completed_date' => 'Tanggal Selesai',
             'tgl_sampai_kota_tujuan' => 'Tgl Sampai Kota Tujuan',
-            'aging' => 'Aging (hari)',
+            'koli' => 'KOLI',
+            'sla' => 'SLA (hari)',
+            'sla_threshold_days' => 'Ambang SLA (hari)',
+            'sla_due_date' => 'Batas SLA',
+            'sla_verdict' => 'Status SLA',
+            'sla_result' => 'Verdict Sheet',
             'status_akhir' => 'Status Akhir',
             'status_instalasi' => 'Status Instalasi',
             'harga_per_shipment' => 'Harga / Shipment',
             'status_invoice' => 'Status Invoice',
             'stagging' => 'Stagging',
-            'sla' => 'SLA (hari)',
-            'sla_result' => 'SLA Result',
             'bast_tgl_balik' => 'BAST Tgl Balik',
             'bast_tgl_ke_finance' => 'BAST Tgl ke Finance',
             'bast_keterangan' => 'BAST Keterangan',
@@ -99,13 +104,17 @@ class ShipmentsController extends Controller
 
         $dateFields = [
             'tanggal_manifest',
+            'tgl_ho_sartrans',
             'completed_date',
             'tgl_sampai_kota_tujuan',
+            'sla_due_date',
             'bast_tgl_balik',
             'bast_tgl_ke_finance',
         ];
 
-        $spreadsheet = new Spreadsheet();
+        $numericFields = ['koli', 'sla', 'sla_threshold_days', 'harga_per_shipment'];
+
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Pengiriman');
 
@@ -116,9 +125,14 @@ class ShipmentsController extends Controller
         }
 
         $rowIndex = 2;
+        $verifiableInExport = 0;
 
-        $query->chunk(1000, function ($shipments) use ($sheet, $columns, $dateFields, &$rowIndex, &$maxLengths) {
+        $query->chunk(1000, function ($shipments) use ($sheet, $columns, $dateFields, &$rowIndex, &$maxLengths, &$verifiableInExport) {
             foreach ($shipments as $ship) {
+                if ($ship->sla_verdict !== null) {
+                    $verifiableInExport++;
+                }
+
                 foreach (array_keys($columns) as $i => $field) {
                     $value = $ship->{$field};
                     $cell = $sheet->getCell(Coordinate::stringFromColumnIndex($i + 1).$rowIndex);
@@ -126,6 +140,17 @@ class ShipmentsController extends Controller
                     if (in_array($field, $dateFields, true) && $value instanceof \DateTimeInterface) {
                         $cell->setValue($value);
                         $length = mb_strlen($value->format('Y-m-d'));
+                    } elseif ($field === 'sla_verdict' && $value === null) {
+                        // Baris tanpa ambang atau tanpa tanggal selesai tidak boleh
+                        // muncul kosong di file yang diambil: kosongnya tidak bisa
+                        // dibedakan dari "tidak ada data" begitu difilter di Excel.
+                        $cell->setValue('Tidak terverifikasi');
+                        $length = mb_strlen('Tidak terverifikasi');
+                    } elseif ($field === 'is_duplicate_no_resi') {
+                        // Kolom boolean dirender eksplisit: "Ya" lebih jelas daripada
+                        // TRUE/FALSE saat difilter di Excel.
+                        $cell->setValue($value ? 'Ya' : 'Tidak');
+                        $length = mb_strlen('Ya');
                     } elseif ($value === null || $value === '') {
                         $cell->setValue(null);
                         $length = 0;
@@ -144,7 +169,9 @@ class ShipmentsController extends Controller
             }
         });
 
+        // Baris 1 adalah header, jadi jumlah baris data satu kurang dari baris terakhir.
         $lastDataRow = $rowIndex - 1;
+        $dataRowCount = $lastDataRow - 1;
         $totalColumns = count($columns);
         $lastColumnLetter = Coordinate::stringFromColumnIndex($totalColumns);
 
@@ -179,8 +206,7 @@ class ShipmentsController extends Controller
                     }
                 }
 
-                $aggColumns = ['aging', 'sla', 'harga_per_shipment'];
-                foreach ($aggColumns as $field) {
+                foreach ($numericFields as $field) {
                     $col = Coordinate::stringFromColumnIndex(array_search($field, array_keys($columns), true) + 1);
                     $sheet->getStyle($col.'2:'.$col.$lastDataRow)
                         ->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
@@ -221,7 +247,7 @@ class ShipmentsController extends Controller
             $filterParts[] = 'cari: "'.$search.'"';
         }
 
-        $meta = 'Dibuat '.now()->format('d M Y H:i').' | '.number_format($lastDataRow, 0, ',', '.').' baris';
+        $meta = 'Dibuat '.now()->format('d M Y H:i').' | '.number_format($dataRowCount, 0, ',', '.').' baris';
         if ($filterParts) {
             $meta .= ' | '.implode(' | ', $filterParts);
         }
@@ -229,6 +255,21 @@ class ShipmentsController extends Controller
         $sheet->setCellValue('A'.$metaRow, $meta);
         $sheet->mergeCells('A'.$metaRow.':'.$lastColumnLetter.$metaRow);
         $sheet->getStyle('A'.$metaRow)->getFont()->setItalic(true)->setSize(10)->getColor()->setARGB('FF64748B');
+
+        // Tanpa catatan ini, file yang keluar dari sistem kehilangan semua jejak
+        // tingkat keyakinan: kolom "Verdict Sheet" dan "Status SLA" terlihat setara
+        // padahal yang kedua dihitung ulang dari ambang yang nyata.
+        $sheet->setCellValue('A'.($metaRow + 1), sprintf(
+            '"Status SLA" = verdict yang dihitung ulang dari Completed date vs Batas SLA. '
+            .'"Verdict Sheet" = teks apa adanya dari sumber. '
+            .'Kolom kosong berarti sumber tidak mengisinya, bukan nol. '
+            .'Tercakup %.1f%% dari baris di file ini (%d dari %d baris terverifikasi).',
+            $dataRowCount > 0 ? 100 * $verifiableInExport / $dataRowCount : 0,
+            $verifiableInExport,
+            $dataRowCount
+        ));
+        $sheet->mergeCells('A'.($metaRow + 1).':'.$lastColumnLetter.($metaRow + 1));
+        $sheet->getStyle('A'.($metaRow + 1))->getFont()->setItalic(true)->setSize(9)->getColor()->setARGB('FF94A3B8');
 
         $writer = new Xlsx($spreadsheet);
         $writer->setPreCalculateFormulas(false);
@@ -257,10 +298,11 @@ class ShipmentsController extends Controller
         }
 
         $sla = $request->input('sla');
+
         if ($sla === 'out') {
-            $query->where('sla_result', 'Out SLA');
+            $query->outSla();
         } elseif ($sla === 'meet') {
-            $query->where('sla_result', 'Meet SLA');
+            $query->meetSla();
         }
 
         $search = trim((string) $request->input('search'));

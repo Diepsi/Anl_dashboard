@@ -144,11 +144,11 @@ class DashboardMetricIntegrityTest extends TestCase
         $this->assertArrayNotHasKey('avgLead', $vendor);
     }
 
-    public function test_on_time_only_counts_shipments_with_a_verified_sla_threshold(): void
+    public function test_on_time_counts_both_sla_column_shapes_and_only_those(): void
     {
-        // Panthera: the source SLA column holds a date serial, so it imports as NULL,
-        // yet it still carries a "Meet SLA" result. Counting it would report a number
-        // nobody can audit.
+        // Panthera style: kolom SLA berisi tanggal batas, jadi sla_due_date terisi dan
+        // verdict-nya bisa dihitung. Dulu kode hanya menerima angka 1..365, sehingga
+        // 28.320 baris seperti ini hilang dari semua perhitungan SLA.
         $this->shipment([
             'no_resi' => 'PANTHERA1',
             'vendor_lm' => 'Panthera',
@@ -156,17 +156,33 @@ class DashboardMetricIntegrityTest extends TestCase
             'completed_date' => '2025-12-05',
             'status_akhir' => 'Completed',
             'sla' => null,
+            'sla_due_date' => '2025-12-10',
             'sla_result' => 'Meet SLA',
         ]);
 
-        // BOMA: a real 3-day threshold with a matching result.
+        // Tanpa ambang sama sekali: teks verdict di sumber tidak bisa diaudit.
+        $this->shipment([
+            'no_resi' => 'TANPAAMBANG1',
+            'vendor_lm' => 'TanpaAmbang',
+            'tanggal_manifest' => '2025-12-01',
+            'completed_date' => '2025-12-05',
+            'status_akhir' => 'Completed',
+            'sla' => null,
+            'sla_due_date' => null,
+            'sla_result' => 'Meet SLA',
+        ]);
+
+        // BOMA: ambang 3 hari dari Tgl HO SarTrans 01/12, selesai 05/12 = Out SLA meski
+        // sheet menulis "Meet SLA".
         $this->shipment([
             'no_resi' => 'BOMA1',
             'vendor_lm' => 'BOMA',
             'tanggal_manifest' => '2025-12-01',
+            'tgl_ho_sartrans' => '2025-12-01',
             'completed_date' => '2025-12-05',
             'status_akhir' => 'Completed',
             'sla' => 3,
+            'sla_due_date' => '2025-12-04',
             'sla_result' => 'Meet SLA',
         ]);
 
@@ -175,18 +191,23 @@ class DashboardMetricIntegrityTest extends TestCase
 
         $boma = collect($view)->firstWhere('vendor', 'BOMA');
         $panthera = collect($view)->firstWhere('vendor', 'Panthera');
+        $none = collect($view)->firstWhere('vendor', 'TanpaAmbang');
 
         $this->assertNotNull($boma);
         $this->assertNotNull($panthera);
+        $this->assertNotNull($none);
 
-        $this->assertSame(100.0, (float) $boma['onTimePct']);
+        $this->assertSame(0.0, (float) $boma['onTimePct'], 'Verdict harus dihitung ulang, bukan diambil dari sheet.');
         $this->assertSame(1, $boma['slaCovered']);
 
+        $this->assertSame(100.0, (float) $panthera['onTimePct'], 'Tanggal batas adalah ambang yang sah.');
+        $this->assertSame(1, $panthera['slaCovered']);
+
         $this->assertNull(
-            $panthera['onTimePct'],
-            'A vendor without a verified SLA threshold must not report an on-time percentage.'
+            $none['onTimePct'],
+            'A vendor without any threshold must not report an on-time percentage.'
         );
-        $this->assertSame(0, $panthera['slaCovered']);
+        $this->assertSame(0, $none['slaCovered']);
     }
 
     public function test_dashboard_reports_how_much_of_the_data_the_sla_rate_covers(): void
@@ -197,6 +218,7 @@ class DashboardMetricIntegrityTest extends TestCase
             'completed_date' => '2025-12-05',
             'status_akhir' => 'Completed',
             'sla' => null,
+            'sla_due_date' => null,
             'sla_result' => 'Meet SLA',
         ]);
 

@@ -21,11 +21,13 @@ class ShipmentSyncService
         'daerah' => ['Daerah'],
         'kota_kabupaten' => ['Kabupaten/Kota', 'Kota/Kab Tujuan'],
         'kecamatan' => ['Kecamatan'],
-        'vendor_mm' => ['Vendor MM'],
-        'kode_funder' => ['Kode Funder'],
-        'nama_funder' => ['Nama Funder'],
+        'vendor_mm' => ['Vendor MM', 'Pengirim'],
+        'kode_funder' => ['Kode Funder', 'Code Funder'],
+        'nama_funder' => ['Nama Funder', 'Founder'],
         'vendor_lm' => ['Vendor LM'],
-        'tanggal_manifest' => ['Tanggal HO ke Vendor', 'Tgl HO dari SarTrans', 'Tanggal Manifest', 'Tanggal Handover ke Vendor'],
+        'tanggal_manifest' => ['Tanggal HO ke Vendor', 'Tanggal Manifest', 'Tanggal Handover ke Vendor'],
+        'tgl_ho_sartrans' => ['Tgl HO dari SarTrans', 'Tanggal HO dari SarTrans'],
+        'koli' => ['kOLI', 'Koli', 'KOLI', 'Jumlah Koli'],
         'completed_date' => ['Completed date'],
         'tgl_sampai_kota_tujuan' => ['Actual ETA KAPAL', 'Tgl sampai di kota tujuan'],
         'aging' => ['Aging'],
@@ -95,10 +97,12 @@ class ShipmentSyncService
         $stats = [
             'raw_rows' => $result['stats']['raw_rows'],
             'skipped_empty' => $result['stats']['skipped_empty'],
+            'skipped_malformed' => $result['stats']['skipped_malformed'],
             'valid_rows' => $result['stats']['valid_rows'],
             'dup_extra' => $result['stats']['dup_extra'],
             'unique_rows' => $result['stats']['unique_rows'],
             'duplicates' => $result['stats']['duplicates'],
+            'malformed_resi' => $result['stats']['malformed_resi'],
         ];
 
         Cache::put(self::SOURCE_FINGERPRINT_CACHE_KEY, $fingerprint);
@@ -141,6 +145,8 @@ class ShipmentSyncService
         $count = 0;
         $rawRows = 0;
         $skippedEmpty = 0;
+        $skippedMalformedCount = 0;
+        $skippedMalformed = [];
         $seen = [];
         $duplicates = [];
 
@@ -157,26 +163,35 @@ class ShipmentSyncService
 
             $data = $this->mapRow($row, $index);
 
-            if ($data['no_resi'] === null || $data['no_resi'] === '') {
+            $rawResi = $this->nullableString($data['no_resi']);
+
+            if ($rawResi === null) {
                 $skippedEmpty++;
 
                 continue;
             }
 
-            if ($data['no_resi'] === 'No Resi' && strtolower((string) $data['nama_sekolah']) === 'nama sekolah') {
+            $resi = $this->normalizeResi($rawResi);
+
+            if ($resi === null) {
+                $skippedMalformedCount++;
+                $skippedMalformed[$rawResi] = ($skippedMalformed[$rawResi] ?? 0) + 1;
+
                 continue;
             }
 
-            if (isset($seen[$data['no_resi']])) {
-                $seen[$data['no_resi']]++;
+            $data['no_resi'] = $resi;
 
-                if ($seen[$data['no_resi']] === 2) {
-                    $duplicates[$data['no_resi']] = 2;
+            if (isset($seen[$resi])) {
+                $seen[$resi]++;
+
+                if ($seen[$resi] === 2) {
+                    $duplicates[$resi] = 2;
                 } else {
-                    $duplicates[$data['no_resi']] = $seen[$data['no_resi']];
+                    $duplicates[$resi] = $seen[$resi];
                 }
             } else {
-                $seen[$data['no_resi']] = 1;
+                $seen[$resi] = 1;
             }
 
             $chunks[] = $data;
@@ -198,15 +213,23 @@ class ShipmentSyncService
             $duplicates = array_slice($duplicates, 0, 50, true);
         }
 
+        $malformedTotal = array_sum($skippedMalformed);
+
+        if (count($skippedMalformed) > 50) {
+            $skippedMalformed = array_slice($skippedMalformed, 0, 50, true);
+        }
+
         return [
             'imported' => $count,
             'stats' => [
                 'raw_rows' => $rawRows,
                 'skipped_empty' => $skippedEmpty,
+                'skipped_malformed' => $skippedMalformedCount,
                 'valid_rows' => $count,
                 'dup_extra' => $dupExtra,
                 'unique_rows' => $count - $dupExtra,
                 'duplicates' => $duplicates,
+                'malformed_resi' => $skippedMalformed,
             ],
         ];
     }
@@ -258,6 +281,8 @@ class ShipmentSyncService
             'nama_funder' => (string) ($namaFunder ?? 'Panthera'),
             'vendor_lm' => $this->nullableString($this->pick($row, $index, $this->columnMap['vendor_lm'])),
             'tanggal_manifest' => $this->toDate($this->pick($row, $index, $this->columnMap['tanggal_manifest'])),
+            'tgl_ho_sartrans' => $this->toDate($this->pick($row, $index, $this->columnMap['tgl_ho_sartrans'])),
+            'koli' => $this->toIntOrNull($this->pick($row, $index, $this->columnMap['koli'])),
             'completed_date' => $this->toDate($this->pick($row, $index, $this->columnMap['completed_date'])),
             'tgl_sampai_kota_tujuan' => $this->toDate($this->pick($row, $index, $this->columnMap['tgl_sampai_kota_tujuan'])),
             'aging' => $this->toInt($this->pick($row, $index, $this->columnMap['aging'])),
@@ -266,7 +291,7 @@ class ShipmentSyncService
             'harga_per_shipment' => $this->toDecimal($this->pick($row, $index, $this->columnMap['harga_per_shipment'])),
             'status_invoice' => $statusInvoice,
             'stagging' => $this->nullableString($this->pick($row, $index, $this->columnMap['stagging'])),
-            'sla' => ($slaRaw !== null && $slaRaw !== '') ? $this->toInt($slaRaw) : null,
+            'sla' => $this->toSlaDays($slaRaw),
             'sla_result' => $this->nullableString($this->pick($row, $index, $this->columnMap['sla_result'])),
             'bast_tgl_balik' => $this->toDate($this->pick($row, $index, $this->columnMap['bast_tgl_balik'])),
             'bast_tgl_ke_finance' => $this->toDate($this->pick($row, $index, $this->columnMap['bast_tgl_ke_finance'])),
@@ -276,15 +301,27 @@ class ShipmentSyncService
 
     protected function pick(array $row, array $index, array $headers)
     {
+        $fallback = null;
+
         foreach ($headers as $header) {
             $col = $index[strtolower($header)] ?? null;
 
-            if ($col !== null && array_key_exists($col, $row)) {
-                return $row[$col];
+            if ($col === null || ! array_key_exists($col, $row)) {
+                continue;
+            }
+
+            $value = $row[$col];
+
+            if ($fallback === null) {
+                $fallback = $value;
+            }
+
+            if (trim((string) $value) !== '') {
+                return $value;
             }
         }
 
-        return null;
+        return $fallback;
     }
 
     protected function flush(array $chunks): void
@@ -325,6 +362,26 @@ class ShipmentSyncService
         return null;
     }
 
+    /**
+     * No Resi hanya dianggap sah bila 13-18 digit angka. Nilai lain
+     * (#N/A, notasi ilmiah 1,0094E+15, formula, teks kosong) ditolak agar
+     * tidak ikut terhitung sebagai pengiriman.
+     */
+    protected function normalizeResi(string $raw): ?string
+    {
+        $value = str_replace([',', ' ', "\xc2\xa0"], '', $raw);
+
+        if ($value === '' || ! ctype_digit($value)) {
+            return null;
+        }
+
+        if (strlen($value) < 13 || strlen($value) > 18) {
+            return null;
+        }
+
+        return $value;
+    }
+
     protected function toInt($value): int
     {
         if (is_numeric($value)) {
@@ -332,6 +389,35 @@ class ShipmentSyncService
         }
 
         return 0;
+    }
+
+    protected function toIntOrNull($value): ?int
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        if (! is_numeric(trim((string) $value))) {
+            return null;
+        }
+
+        return (int) trim((string) $value);
+    }
+
+    /**
+     * Ambang SLA hanya bermakna sebagai jumlah hari dalam rentang 1..365.
+     * Nilai lain (mis. serial date, teks, atau 0) tidak pernah dihitung
+     * sebagai SLA dan disimpan NULL supaya tidak ikut ter-Smith.
+     */
+    protected function toSlaDays($value): ?int
+    {
+        $days = $this->toIntOrNull($value);
+
+        if ($days === null || $days < 1 || $days > 365) {
+            return null;
+        }
+
+        return $days;
     }
 
     protected function toDecimal($value): float

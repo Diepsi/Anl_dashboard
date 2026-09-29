@@ -98,6 +98,8 @@
             $validRows = (int) $sourceStats['valid_rows'];
             $dupExtra = (int) $sourceStats['dup_extra'];
             $skippedEmpty = (int) $sourceStats['skipped_empty'];
+            $skippedMalformed = (int) ($sourceStats['skipped_malformed'] ?? 0);
+            $malformedResi = $sourceStats['malformed_resi'] ?? [];
             $duplicates = $sourceStats['duplicates'] ?? [];
             $diff = $validRows - $dbTotal;
         @endphp
@@ -146,7 +148,35 @@
                         @endif
                         {{ $skippedEmpty }} baris tanpa No Resi diabaikan.
                     @endif
+                    @if ($skippedMalformed > 0)
+            @if ($diff !== 0 || $skippedEmpty > 0 || $skippedMalformed > 0)
+                            ·
+                        @else
+                            &
+                        @endif
+                        {{ number_format($skippedMalformed, 0, ',', '.') }} baris dengan <span class="font-semibold text-red-700">No Resi tidak valid</span> ditolak, tidak dihitung sebagai pengiriman.
+                    @endif
                 </p>
+            @endif
+            @if (! empty($malformedResi))
+                <details class="mt-2 group">
+                    <summary class="text-xs font-semibold text-red-700 cursor-pointer hover:text-red-800 select-none">
+                        Lihat No Resi tidak valid ({{ $skippedMalformed }} baris)
+                    </summary>
+                    <p class="mt-1 text-[11px] text-slate-500">
+                        Nilai ini bukan nomor resi (mis. <span class="font-mono">#N/A</span> atau notasi ilmiah
+                        <span class="font-mono">1,0094E+15</span>). Perbaiki di sheet, atau ubah kolom
+                        <span class="font-semibold">No Resi</span> menjadi Plain text agar tidak dikonversi angka.
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                        @foreach ($malformedResi as $nilai => $muncul)
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 border border-red-200 text-[11px] font-mono text-red-800">
+                                {{ $nilai }}
+                                <span class="text-red-400 font-sans">×{{ $muncul }}</span>
+                            </span>
+                        @endforeach
+                    </div>
+                </details>
             @endif
             @if (! empty($duplicates))
                 <details class="mt-2 group">
@@ -176,6 +206,12 @@
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Total Shipments</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($totalShipment, 0, ',', '.') }}</p>
                     <p class="mt-1 text-xs text-slate-400">Total keseluruhan resi</p>
+                    @if ($koliRows > 0)
+                        <p class="mt-2 text-xs text-slate-500">
+                            <span class="font-semibold text-slate-700">{{ number_format($totalKoli, 0, ',', '.') }}</span> koli
+                            <span class="text-slate-400">· n {{ number_format($koliRows, 0, ',', '.') }} resi</span>
+                        </p>
+                    @endif
                     <div class="mt-3">
                         <div class="flex items-center justify-between text-xs">
                             <span class="text-slate-500 font-medium">Completion</span>
@@ -265,7 +301,7 @@
                 <div class="min-w-0">
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Within SLA</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($withinSla, 0, ',', '.') }}</p>
-                    <p class="mt-1 text-xs text-slate-400">Tepat & sesuai SLA</p>
+                    <p class="mt-1 text-xs text-slate-400">Tepat & sesuai SLA terverifikasi</p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-emerald-500/10 shrink-0">
                     <svg class="w-6 h-6 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -285,6 +321,7 @@
                         Berjalan <span class="font-semibold text-red-600">{{ number_format($outSlaActive) }}</span>
                         · selesai <span class="font-semibold">{{ number_format($outSlaDone) }}</span>
                     </p>
+                    <p class="mt-1 text-[11px] leading-snug text-slate-400">Hanya dihitung pada kiriman berambang SLA valid.</p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-red-600/10 shrink-0">
                     <svg class="w-6 h-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -299,10 +336,23 @@
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">SLA Ach. Rate</p>
-                    <p class="mt-2 text-3xl font-bold text-slate-900">{{ $slaPct }}<span class="text-lg text-slate-400 font-semibold">%</span></p>
+                    <p class="mt-2 text-3xl font-bold text-slate-900">
+                        @if ($slaPct === null)
+                            <span class="text-slate-300">&mdash;</span>
+                        @else
+                            {{ $slaPct }}<span class="text-lg text-slate-400 font-semibold">%</span>
+                        @endif
+                    </p>
                     <p class="mt-1 text-xs text-slate-400">
                         Meet <span class="font-semibold text-emerald-600">{{ number_format($withinSla) }}</span>
                         · Over <span class="font-semibold text-red-600">{{ number_format($overSla) }}</span>
+                    </p>
+                    <p class="mt-1 text-[11px] leading-snug text-slate-400">
+                        Dari <span class="font-semibold text-slate-500">{{ number_format($slaCovered) }}</span>
+                        kiriman berambang SLA valid
+                        @if ($slaUnverified > 0)
+                            · <span class="font-semibold text-amber-600">{{ number_format($slaUnverified) }}</span> tanpa ambang SLA terverifikasi, tidak dihitung
+                        @endif
                     </p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-indigo-500/10 shrink-0">
@@ -313,19 +363,26 @@
             </div>
         </div>
 
-        {{-- Rata-rata Durasi --}}
+        {{-- Median Durasi --}}
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 border-t-4 border-t-cyan-600 p-5">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                    <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Rata-rata Durasi</p>
+                    <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Median Durasi</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">
-                        @if ($avgLeadTime > 0)
-                            {{ number_format($avgLeadTime, 1, ',', '.') }}<span class="text-lg text-slate-400 font-semibold"> hari</span>
+                        @if ($leadTime['median'] !== null)
+                            {{ number_format($leadTime['median'], 0, ',', '.') }}<span class="text-lg text-slate-400 font-semibold"> hari</span>
                         @else
                             <span class="text-2xl text-slate-300">—</span>
                         @endif
                     </p>
                     <p class="mt-1 text-xs text-slate-400">Manifest → selesai (Completed)</p>
+                    @if ($leadTime['sample'] > 0)
+                        <p class="mt-1 text-xs text-slate-400">
+                            p90 <span class="font-semibold text-slate-600">{{ number_format($leadTime['p90'], 0, ',', '.') }} hari</span>
+                            <span class="text-slate-300">·</span>
+                            n <span class="font-semibold text-slate-600">{{ number_format($leadTime['sample'], 0, ',', '.') }}</span>
+                        </p>
+                    @endif
                 </div>
                 <div class="p-2.5 rounded-lg bg-cyan-600/10 shrink-0">
                     <svg class="w-6 h-6 text-cyan-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -377,14 +434,20 @@
         <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
             <div class="mb-4">
                 <h2 class="text-lg font-bold text-slate-900">SLA Compliance Rate</h2>
-                <p class="text-sm text-slate-500">Tingkat pemenuhan SLA keseluruhan</p>
+                <p class="text-sm text-slate-500">
+                    Tingkat pemenuhan SLA pada {{ number_format($slaCovered) }} kiriman berambang SLA valid
+                </p>
             </div>
             <div class="relative h-[260px]">
                 <canvas id="slaChart"></canvas>
                 <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div class="text-center">
-                        <p class="text-3xl font-bold text-slate-900">{{ $slaPct }}<span class="text-base text-slate-400">%</span></p>
-                        <p class="text-xs text-slate-400 font-medium">Meet SLA</p>
+                        @if ($slaPct === null)
+                            <p class="text-3xl font-bold text-slate-300">&mdash;</p>
+                        @else
+                            <p class="text-3xl font-bold text-slate-900">{{ $slaPct }}<span class="text-base text-slate-400">%</span></p>
+                            <p class="text-xs text-slate-400 font-medium">Meet SLA</p>
+                        @endif
                     </div>
                 </div>
             </div>
@@ -443,7 +506,7 @@
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden stagger-ready">
         <div class="px-6 py-5 border-b border-slate-200">
             <h2 class="text-lg font-bold text-slate-900">Kinerja Vendor</h2>
-            <p class="text-sm text-slate-500">5 vendor teratas — kualitas on-time (SLA), rata-rata durasi kirim, & aging</p>
+            <p class="text-sm text-slate-500">5 vendor teratas — kualitas on-time (SLA) & durasi kirim. Durasi memakai median/p90, hanya baris yang punya tanggal manifest. On-time hanya dihitung bila vendor punya ambang SLA terverifikasi.</p>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full text-left text-sm">
@@ -452,8 +515,8 @@
                         <th class="px-6 py-3 font-semibold">Vendor LM</th>
                         <th class="px-6 py-3 font-semibold">Total Resi</th>
                         <th class="px-6 py-3 font-semibold">On-Time (SLA)</th>
-                        <th class="px-6 py-3 font-semibold">Rata-rata Durasi</th>
-                        <th class="px-6 py-3 font-semibold">Rata-rata Aging</th>
+                        <th class="px-6 py-3 font-semibold">Median Durasi</th>
+                        <th class="px-6 py-3 font-semibold">p90 Durasi</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
@@ -462,13 +525,26 @@
                             <td class="px-6 py-3.5 font-semibold text-slate-800">{{ $v['vendor'] }}</td>
                             <td class="px-6 py-3.5 text-slate-600">{{ number_format($v['total'], 0, ',', '.') }}</td>
                             <td class="px-6 py-3.5">
-                                <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
-                                    {{ $v['onTimePct'] >= 80 ? 'bg-emerald-100 text-emerald-700' : ($v['onTimePct'] >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700') }}">
-                                    {{ $v['onTimePct'] }}%
-                                </span>
+                                @if ($v['onTimePct'] === null)
+                                    <span class="text-slate-400" title="Vendor ini tidak punya ambang SLA terverifikasi di sumber data, jadi on-time tidak bisa dihitung">—</span>
+                                    <span class="block text-xs text-slate-400">tanpa ambang SLA</span>
+                                @else
+                                    <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
+                                        {{ $v['onTimePct'] >= 80 ? 'bg-emerald-100 text-emerald-700' : ($v['onTimePct'] >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700') }}">
+                                        {{ $v['onTimePct'] }}%
+                                    </span>
+                                    <span class="block text-xs text-slate-400">n {{ number_format($v['slaCovered'], 0, ',', '.') }}</span>
+                                @endif
                             </td>
-                            <td class="px-6 py-3.5 text-slate-600">{{ $v['avgLead'] !== null ? number_format($v['avgLead'], 1, ',', '.') . ' hari' : '—' }}</td>
-                            <td class="px-6 py-3.5 text-slate-600">{{ $v['avgAging'] !== null ? number_format($v['avgAging'], 1, ',', '.') . ' hari' : '—' }}</td>
+                            <td class="px-6 py-3.5 text-slate-600">{{ $v['medianLead'] !== null ? number_format($v['medianLead'], 0, ',', '.') . ' hari' : '—' }}</td>
+                            <td class="px-6 py-3.5 text-slate-600">
+                                @if ($v['p90Lead'] !== null)
+                                    {{ number_format($v['p90Lead'], 0, ',', '.') }} hari
+                                    <span class="block text-xs text-slate-400">n {{ number_format($v['leadSample'], 0, ',', '.') }}</span>
+                                @else
+                                    <span class="text-slate-400" title="Tanggal manifest belum tersedia di sumber data">—</span>
+                                @endif
+                            </td>
                         </tr>
                     @empty
                         <tr>
@@ -550,7 +626,7 @@
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 stagger-ready">
         <div class="mb-4">
             <h2 class="text-lg font-bold text-slate-900">Perlu Perhatian</h2>
-            <p class="text-sm text-slate-500">Pengiriman belum selesai yang perlu follow-up — usia ≥ 14 hari atau berstatus Hold/Undelivered</p>
+            <p class="text-sm text-slate-500">Pengiriman belum selesai yang perlu follow-up — Hold/Undelivered, atau usia ≥ 14 hari dari tanggal manifest terakhir</p>
         </div>
 
         @php
@@ -560,11 +636,11 @@
 
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
             @foreach ($agingBuckets as $label => $total)
-                <div class="rounded-xl border {{ $label === '> 30 hari' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-slate-50/60' }} p-4">
-                    <p class="text-xs font-semibold tracking-wider {{ $label === '> 30 hari' ? 'text-red-600' : 'text-slate-500' }} uppercase">{{ $label }}</p>
-                    <p class="mt-1 text-2xl font-bold {{ $label === '> 30 hari' ? 'text-red-700' : 'text-slate-900' }}">{{ number_format($total) }}</p>
+                <div class="rounded-xl border {{ $label === '> 60 hari' ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-slate-50/60' }} p-4">
+                    <p class="text-xs font-semibold tracking-wider {{ $label === '> 60 hari' ? 'text-red-600' : 'text-slate-500' }} uppercase">{{ $label }}</p>
+                    <p class="mt-1 text-2xl font-bold {{ $label === '> 60 hari' ? 'text-red-700' : 'text-slate-900' }}">{{ number_format($total) }}</p>
                     <div class="mt-2 h-1.5 rounded-full bg-slate-200/70 overflow-hidden">
-                        <div class="h-full rounded-full {{ $label === '> 30 hari' ? 'bg-red-400' : 'bg-slate-400' }}"
+                        <div class="h-full rounded-full {{ $label === '> 60 hari' ? 'bg-red-400' : 'bg-slate-400' }}"
                              style="width: {{ ($total / max($agingTotal, 1)) * 100 }}%"></div>
                     </div>
                 </div>

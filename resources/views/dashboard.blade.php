@@ -846,7 +846,7 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <template x-for="row in modalRows" :key="row.no_resi">
+                        <template x-for="row in modalRows" :key="row.id">
                             <tr class="hover:bg-slate-50">
                                 <td class="px-6 py-3 font-mono text-slate-700 whitespace-nowrap">
                                     <span x-text="row.no_resi || '—'"></span>
@@ -870,7 +870,10 @@
                         <tr x-show="modalLoading">
                             <td colspan="6" class="px-6 py-10 text-center text-slate-400">Memuat data...</td>
                         </tr>
-                        <tr x-show="!modalLoading && modalRows.length === 0">
+                        <tr x-show="!modalLoading && modalError">
+                            <td colspan="6" class="px-6 py-10 text-center text-red-500" x-text="modalError"></td>
+                        </tr>
+                        <tr x-show="!modalLoading && !modalError && modalRows.length === 0">
                             <td colspan="6" class="px-6 py-10 text-center text-slate-400">Tidak ada data pada filter ini.</td>
                         </tr>
                     </tbody>
@@ -953,6 +956,7 @@ document.addEventListener('alpine:init', () => {
         modalRows: [],
         modalRowsFound: 0,
         modalLoading: false,
+        modalError: '',
         statusClass(status) {
             return {
                 'Completed': 'bg-green-100 text-green-700',
@@ -1014,13 +1018,43 @@ document.addEventListener('alpine:init', () => {
             this.modalSubtitle = subtitle;
             this.modalRows = [];
             this.modalRowsFound = foundTotal || 0;
+            this.modalError = '';
             this.modalLoading = true;
             this.modalOpen = true;
 
-            fetch(url)
-                .then(r => r.json())
-                .then(rows => { this.modalRows = rows; this.modalLoading = false; })
-                .catch(() => { this.modalRows = []; this.modalLoading = false; });
+            fetch(url, {
+                credentials: 'same-origin',
+                headers: { Accept: 'application/json' },
+            })
+                .then(r => {
+                    if (r.status === 401 || (r.redirected && r.url.includes('/login'))) {
+                        window.location.href = @json(route('login'));
+
+                        throw new Error('unauthenticated');
+                    }
+
+                    if (!r.ok) {
+                        throw new Error('HTTP ' + r.status);
+                    }
+
+                    return r.json();
+                })
+                .then(rows => {
+                    if (!Array.isArray(rows)) {
+                        throw new Error('Respons tidak valid');
+                    }
+
+                    this.modalRows = rows;
+                    this.modalLoading = false;
+                })
+                .catch(error => {
+                    this.modalRows = [];
+                    this.modalLoading = false;
+
+                    if (error.message !== 'unauthenticated') {
+                        this.modalError = 'Gagal memuat data. Silakan coba lagi.';
+                    }
+                });
         },
     }));
 });

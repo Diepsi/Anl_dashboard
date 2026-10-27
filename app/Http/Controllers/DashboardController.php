@@ -124,6 +124,7 @@ class DashboardController extends Controller
             'TIBA DI PORT TRANSIT',
             'BERANGKAT DARI PORT TRANSIT',
             'MENUJU HUB DESTINASI',
+            'TIBA DI HUB DESTINASI',
             'TIBA DI PORT DESTINASI',
             'PROCESS DOORING',
         ];

@@ -15,7 +15,7 @@ class ShipmentApiController extends Controller
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(50)
-            ->get(['no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'tanggal_manifest', 'status_akhir', 'sla', 'sla_due_date', 'completed_date', 'sla_result']);
+            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'tanggal_manifest', 'status_akhir', 'sla', 'sla_due_date', 'completed_date', 'sla_result']);
 
         return response()->json($shipments);
     }
@@ -38,7 +38,7 @@ class ShipmentApiController extends Controller
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(50)
-            ->get(['no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'kecamatan', 'tanggal_manifest', 'completed_date', 'sla', 'sla_due_date', 'status_akhir']);
+            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'kecamatan', 'tanggal_manifest', 'completed_date', 'sla', 'sla_due_date', 'status_akhir']);
 
         return response()->json($shipments);
     }

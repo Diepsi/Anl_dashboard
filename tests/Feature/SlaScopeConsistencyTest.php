@@ -235,6 +235,90 @@ class SlaScopeConsistencyTest extends TestCase
         $this->assertNotContains('OLD_STAGE1', $in30);
     }
 
+    public function test_staging_modal_returns_a_unique_id_for_rows_without_a_resi(): void
+    {
+        $stage = 'PROCESS DOORING';
+
+        $this->shipment([
+            'no_resi' => null,
+            'stagging' => $stage,
+            'tanggal_manifest' => '2025-12-01',
+        ]);
+
+        $this->shipment([
+            'no_resi' => null,
+            'stagging' => $stage,
+            'tanggal_manifest' => '2025-12-01',
+        ]);
+
+        $this->shipment([
+            'no_resi' => 'RESIUNIK1',
+            'stagging' => $stage,
+            'tanggal_manifest' => '2025-12-01',
+        ]);
+
+        $user = User::factory()->create();
+
+        $rows = $this->actingAs($user)
+            ->getJson(route('api.staging', ['stagging' => $stage]))
+            ->assertOk()
+            ->json();
+
+        $this->assertCount(3, $rows);
+        $this->assertArrayHasKey('id', $rows[0]);
+        $this->assertCount(3, array_unique(array_column($rows, 'id')));
+        $this->assertSame(2, count(array_filter($rows, fn ($row) => $row['no_resi'] === null)));
+    }
+
+    public function test_bottleneck_modal_returns_a_unique_id_for_rows_without_a_resi(): void
+    {
+        foreach ([null, null, 'RESIOUT1'] as $noResi) {
+            $this->shipment([
+                'no_resi' => $noResi,
+                'sla_due_date' => '2025-12-10',
+                'completed_date' => '2025-12-11',
+            ]);
+        }
+
+        $user = User::factory()->create();
+
+        $rows = $this->actingAs($user)
+            ->getJson(route('api.bottleneck', ['provinsi' => 'Jawa Barat']))
+            ->assertOk()
+            ->json();
+
+        $this->assertCount(3, $rows);
+        $this->assertArrayHasKey('id', $rows[0]);
+        $this->assertCount(3, array_unique(array_column($rows, 'id')));
+        $this->assertSame(2, count(array_filter($rows, fn ($row) => $row['no_resi'] === null)));
+    }
+
+    public function test_dashboard_staging_panel_includes_tiba_di_hub_destinasi(): void
+    {
+        $stages = [
+            'MENUJU HUB DESTINASI',
+            'TIBA DI HUB DESTINASI',
+            'TIBA DI PORT DESTINASI',
+            'PROCESS DOORING',
+        ];
+
+        foreach ($stages as $index => $stage) {
+            $this->shipment([
+                'no_resi' => 'STAGE'.($index + 1),
+                'stagging' => $stage,
+                'tanggal_manifest' => '2025-12-01',
+            ]);
+        }
+
+        $user = User::factory()->create();
+
+        $stagging = collect(
+            $this->actingAs($user)->get(route('dashboard'))->viewData('staggingList')
+        );
+
+        $this->assertSame($stages, $stagging->pluck('name')->all());
+    }
+
     public function test_an_unrecognised_range_falls_back_to_all_time(): void
     {
         $this->shipment([

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ClusteringController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ShipmentApiController;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth'])->group(function () {
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/clustering', [ClusteringController::class, 'index'])->name('clustering');
     Route::get('/pengiriman', [ShipmentsController::class, 'index'])->name('shipments');
     Route::post('/pengiriman/export', [ShipmentsController::class, 'export'])->name('shipments.export');
     Route::get('/api/shipments/staging/{stagging}', [ShipmentApiController::class, 'staging'])->name('api.staging');

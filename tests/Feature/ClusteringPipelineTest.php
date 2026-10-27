@@ -138,7 +138,7 @@ class ClusteringPipelineTest extends TestCase
             ->assertExitCode(1);
     }
 
-    public function test_dashboard_renders_clustering_section(): void
+    public function test_clustering_page_renders_section(): void
     {
         RegionalCluster::create([
             'kota_kabupaten' => 'Kota X',
@@ -155,7 +155,7 @@ class ClusteringPipelineTest extends TestCase
         $user = User::factory()->create();
 
         $this->actingAs($user)
-            ->get(route('dashboard'))
+            ->get(route('clustering'))
             ->assertOk()
             ->assertSee('Analitik Clustering Performance Wilayah')
             ->assertSee('clusterChart');

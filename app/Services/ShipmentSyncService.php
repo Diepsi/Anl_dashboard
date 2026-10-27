@@ -223,10 +223,10 @@ class ShipmentSyncService
     }
 
     /**
-     * Semua baris berisi data diubah jadi baris database. Tidak ada lagi baris yang
-     * dibuang karena resi kosong/rubah: nomor yang tak bisa dipakai disimpan sebagai
-     * NULL dan ditandai lewat "—" di tampilan, sesuai keputusan pemilik data bahwa
-     * "data di masukkan semua".
+     * Semua baris berisi data shipment diubah jadi baris database. Baris yang hanya
+     * berisi nomor urut dan flag formula dari template Google Sheets dilewati, karena
+     * bukan pengiriman. Baris yang resinya kosong/rusak tetapi punya data shipment
+     * tetap disimpan dengan no_resi NULL.
      */
     protected function buildRows(string $file, array $index): array
     {
@@ -256,9 +256,13 @@ class ShipmentSyncService
                 continue;
             }
 
-            $rawRows++;
-
             $data = $this->mapRow($row, $index);
+
+            if ($this->isEmptyShipment($data)) {
+                continue;
+            }
+
+            $rawRows++;
 
             $rawResi = $data['no_resi'];
 
@@ -299,8 +303,8 @@ class ShipmentSyncService
 
     /**
      * Jumlah baris yang akan benar-benar di-import, dihitung dari file tanpa
-     * menyentuh database. Setiap baris berisi data masuk — resi bukan lagi syarat —
-     * supaya angka pre-flight persis dengan hasilnya.
+     * menyentuh database. Baris template yang tidak punya data shipment tidak
+     * dihitung, supaya angka pre-flight persis dengan hasilnya.
      */
     protected function countImportableRows(string $file, array $index): int
     {
@@ -323,10 +327,36 @@ class ShipmentSyncService
                 continue;
             }
 
+            if ($this->isEmptyShipment($this->mapRow($row, $index))) {
+                continue;
+            }
+
             $count++;
         }
 
         return $count;
+    }
+
+    /**
+     * Baris template Google Sheets sering hanya berisi nomor urut dan flag formula
+     * seperti "FALSE". Setelah mapping, baris seperti itu tidak punya satu pun field
+     * shipment, jadi tidak boleh dianggap pengiriman.
+     */
+    protected function isEmptyShipment(array $data): bool
+    {
+        foreach ($data as $key => $value) {
+            if ($key === 'no_resi' || $value === null) {
+                continue;
+            }
+
+            if (is_string($value) && trim($value) === '') {
+                continue;
+            }
+
+            return false;
+        }
+
+        return trim((string) ($data['no_resi'] ?? '')) === '';
     }
 
     protected function isEmptyRow(array $row): bool

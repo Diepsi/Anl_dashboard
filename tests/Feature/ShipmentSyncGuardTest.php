@@ -121,6 +121,45 @@ class ShipmentSyncGuardTest extends TestCase
         $this->assertSame(0, Shipment::query()->where('is_duplicate_no_resi', true)->count());
     }
 
+    public function test_rows_without_shipment_data_are_not_imported(): void
+    {
+        $this->fakeCsv(
+            "No,No Resi,NAMA SEKOLAH,CLOSE STATUS\n".
+            "1,{$this->resi(101)},SD 1,Completed\n".
+            "2,,,FALSE\n".
+            "3,,,FALSE\n"
+        );
+
+        $count = app(ShipmentSyncService::class)->sync(replace: true);
+
+        $this->assertSame(1, $count);
+        $this->assertSame(1, Shipment::count());
+        $this->assertSame($this->resi(101), Shipment::first()->no_resi);
+    }
+
+    public function test_template_rows_do_not_defeat_the_shrink_guard(): void
+    {
+        $this->seedShipments(10);
+
+        $body = "No,No Resi,NAMA SEKOLAH,CLOSE STATUS\n".
+            "1,{$this->resi(99)},SD 1,Completed\n";
+
+        foreach (range(2, 21) as $i) {
+            $body .= "{$i},,,FALSE\n";
+        }
+
+        $this->fakeCsv($body);
+
+        try {
+            app(ShipmentSyncService::class)->sync(replace: true);
+            $this->fail('Sheet yang menyusut drastis seharusnya ditolak.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('turun drastis', $e->getMessage());
+        }
+
+        $this->assertSame(10, Shipment::count());
+    }
+
     public function test_a_shrunken_sheet_is_rejected_before_the_table_is_cleared(): void
     {
         $this->seedShipments(10);

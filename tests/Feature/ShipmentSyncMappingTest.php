@@ -26,6 +26,8 @@ class ShipmentSyncMappingTest extends TestCase
         'Tgl HO dari SarTrans',
         'Completed date',
         'SLA',
+        'SLA FOR VENDOR',
+        'RESULT FOR VENDOR',
         'Aging',
         'Result Delivery for Panthera',
         'Harga Per Shipment',
@@ -103,6 +105,36 @@ class ShipmentSyncMappingTest extends TestCase
         $this->assertNull($this->map(['SLA' => '0'])['sla']);
         $this->assertNull($this->map(['SLA' => ''])['sla']);
         $this->assertNull($this->map(['SLA' => '400'])['sla']);
+    }
+
+    public function test_an_alphanumeric_boma_resi_is_kept(): void
+    {
+        $this->assertSame('26P296011490159', $this->normalizeResi('26P296011490159'));
+        $this->assertSame('26P296011490159', $this->normalizeResi('26p296011490159'));
+        $this->assertNull($this->normalizeResi('26P123'));
+    }
+
+    public function test_vendor_sla_columns_are_mapped(): void
+    {
+        $data = $this->map([
+            'SLA FOR VENDOR' => '16',
+            'RESULT FOR VENDOR' => 'Over SLA',
+        ]);
+
+        $this->assertSame(16, $data['sla_vendor_days']);
+        $this->assertSame('Over SLA', $data['sla_vendor_result']);
+    }
+
+    public function test_vendor_sla_values_do_not_make_a_template_row_look_like_a_shipment(): void
+    {
+        $method = new \ReflectionMethod(ShipmentSyncService::class, 'isEmptyShipment');
+        $mapped = $this->map([
+            'No Resi' => '',
+            'SLA FOR VENDOR' => '16',
+            'RESULT FOR VENDOR' => 'Over SLA',
+        ]);
+
+        $this->assertTrue($method->invoke($this->service(), $mapped));
     }
 
     /**

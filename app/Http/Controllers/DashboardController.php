@@ -17,7 +17,19 @@ class DashboardController extends Controller
             $range = 0;
         }
 
-        $base = Shipment::query()->inRange($range);
+        $base = Shipment::query()->hasValidResi()->inRange($range);
+
+        $requestedSlaMode = $request->query('sla_mode');
+        $slaMode = in_array($requestedSlaMode, ['vendor', 'customer'], true) ? $requestedSlaMode : 'vendor';
+        $slaModeFallback = false;
+
+        $vendorSlaCovered = $base->clone()->slaVendorVerifiable()->count();
+        $customerSlaCovered = $base->clone()->slaVerifiable()->count();
+
+        if ($slaMode === 'vendor' && $vendorSlaCovered === 0 && $customerSlaCovered > 0) {
+            $slaMode = 'customer';
+            $slaModeFallback = true;
+        }
 
         $activeStatuses = ['On Process', 'On Process Delivery', 'Dikirim', 'On Delivery', 'Undelivered', 'Hold', 'Retur'];
 
@@ -32,27 +44,31 @@ class DashboardController extends Controller
         $holdCount = $base->clone()->where('status_akhir', 'Hold')->count();
         $returCount = $base->clone()->where('status_akhir', 'Retur')->count();
 
-        // Verdict SLA dihitung ulang dari completed_date vs sla_due_date, bukan
-        // dari teks verdict di sheet. Kolom SLA di sumber berisi dua bentuk (ambang
-        // hari untuk BOMA, tanggal batas untuk vendor lain) dan keduanya sudah
-        // disatukan menjadi sla_due_date saat sync, jadi satu scope ini berlaku
-        // untuk semua vendor. Cakupannya naik dari 10,6% menjadi 99,7%.
-        $withinSla = $base->clone()->meetSla()->count();
-
-        $overSla = $base->clone()->outSla()->count();
-
-        $slaCovered = $base->clone()->slaVerifiable()->count();
+        if ($slaMode === 'vendor') {
+            $withinSla = $base->clone()->meetSlaVendor()->count();
+            $overSla = $base->clone()->outSlaVendor()->count();
+            $slaCovered = $vendorSlaCovered;
+            $outSlaActive = $base->clone()
+                ->outSlaVendor()
+                ->where('status_akhir', '!=', 'Completed')
+                ->count();
+        } else {
+            // Fallback dan mode customer menghitung ulang dari completed_date vs
+            // sla_due_date, bukan dari teks verdict di sheet.
+            $withinSla = $base->clone()->meetSla()->count();
+            $overSla = $base->clone()->outSla()->count();
+            $slaCovered = $customerSlaCovered;
+            $outSlaActive = $base->clone()
+                ->outSla()
+                ->where('status_akhir', '!=', 'Completed')
+                ->count();
+        }
 
         $slaDenom = $withinSla + $overSla;
         $slaPct = $slaDenom > 0 ? round(($withinSla / $slaDenom) * 100) : null;
         $slaUnverified = $totalShipment - $slaCovered;
-
-        $outSlaActive = $base->clone()
-            ->outSla()
-            ->where('status_akhir', '!=', 'Completed')
-            ->count();
-
         $outSlaDone = $overSla - $outSlaActive;
+        $slaModeLabel = $slaMode === 'vendor' ? 'Vendor (Sheet)' : 'Customer (Tanggal)';
 
         $totalKoli = (int) $base->clone()->sum('koli');
         $koliRows = (int) $base->clone()->whereNotNull('koli')->count();
@@ -84,38 +100,7 @@ class DashboardController extends Controller
             'Belum' => $totalShipment - $bastFinanceCount,
         ])->filter(fn ($total) => $total > 0);
 
-        $chartData = $base->clone()
-            ->withConsistentDates()
-            ->whereNotNull('tanggal_manifest')
-            ->selectRaw('DATE(tanggal_manifest) as tanggal')
-            ->selectRaw('COUNT(*) as volume_kirim')
-            ->selectRaw('SUM(CASE WHEN status_akhir = "Completed" THEN 1 ELSE 0 END) as volume_selesai')
-            ->groupByRaw('DATE(tanggal_manifest)')
-            ->orderBy('tanggal')
-            ->get();
-
-        $outSlaDaily = $base->clone()
-            ->withConsistentDates()
-            ->whereNotNull('tanggal_manifest')
-            ->outSla()
-            ->selectRaw('DATE(tanggal_manifest) as tanggal')
-            ->selectRaw('COUNT(*) as volume_out')
-            ->groupByRaw('DATE(tanggal_manifest)')
-            ->orderBy('tanggal')
-            ->get()
-            ->keyBy('tanggal');
-
-        $slaComplianceDaily = $base->clone()
-            ->withConsistentDates()
-            ->whereNotNull('tanggal_manifest')
-            ->slaVerifiable()
-            ->selectRaw('DATE(tanggal_manifest) as tanggal')
-            ->selectRaw('SUM(CASE WHEN completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet')
-            ->selectRaw('COUNT(*) as total')
-            ->groupByRaw('DATE(tanggal_manifest)')
-            ->orderBy('tanggal')
-            ->get()
-            ->keyBy('tanggal');
+        $trend = $this->trendSeries($base, $range, $slaMode);
 
         $staggingOrder = [
             'BERANGKAT DARI CROSSDOCK',
@@ -146,7 +131,11 @@ class DashboardController extends Controller
 
         $bottleneckStats = $base->clone()
             ->selectRaw('provinsi, COUNT(*) as total')
-            ->outSla()
+            ->when(
+                $slaMode === 'vendor',
+                fn ($q) => $q->outSlaVendor(),
+                fn ($q) => $q->outSla()
+            )
             ->whereNotNull('provinsi')
             ->groupBy('provinsi')
             ->orderByDesc('total')
@@ -177,13 +166,20 @@ class DashboardController extends Controller
 
         $vendorLeadTimes = $this->leadTimeStatsByVendor($base->clone());
 
+        $vendorCoveredSql = $slaMode === 'vendor'
+            ? "SUM(CASE WHEN sla_vendor_result IN ('Meet SLA', 'Over SLA', 'Out SLA') THEN 1 ELSE 0 END) as sla_covered"
+            : 'SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL THEN 1 ELSE 0 END) as sla_covered';
+        $vendorMeetSql = $slaMode === 'vendor'
+            ? "SUM(CASE WHEN sla_vendor_result = 'Meet SLA' THEN 1 ELSE 0 END) as meet"
+            : 'SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL AND completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet';
+
         $vendorStats = $base->clone()
             ->whereNotNull('vendor_lm')
             ->where('vendor_lm', '!=', '')
             ->selectRaw('vendor_lm')
             ->selectRaw('COUNT(*) as total')
-            ->selectRaw('SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL THEN 1 ELSE 0 END) as sla_covered')
-            ->selectRaw('SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL AND completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet')
+            ->selectRaw($vendorCoveredSql)
+            ->selectRaw($vendorMeetSql)
             ->groupBy('vendor_lm')
             ->orderByDesc('total')
             ->limit(5)
@@ -283,9 +279,16 @@ class DashboardController extends Controller
         $lastSync = $service->lastSyncedAt();
         $sourceStats = $service->sourceStats();
         $dbTotal = Shipment::count();
+        $validDbTotal = Shipment::query()->hasValidResi()->count();
+        $invalidTotal = $dbTotal - $validDbTotal;
 
         return view('dashboard', compact(
             'range',
+            'slaMode',
+            'slaModeLabel',
+            'slaModeFallback',
+            'invalidTotal',
+            'validDbTotal',
             'totalShipment',
             'completed',
             'onDeliveryCount',
@@ -307,9 +310,7 @@ class DashboardController extends Controller
             'statusBreakdown',
             'bastBalikStats',
             'bastFinanceStats',
-            'chartData',
-            'outSlaDaily',
-            'slaComplianceDaily',
+            'trend',
             'staggingList',
             'bottleneckStats',
             'topProvinces',
@@ -325,6 +326,117 @@ class DashboardController extends Controller
             'sourceStats',
             'dbTotal',
         ));
+    }
+
+    protected function trendSeries($base, int $range, string $slaMode): array
+    {
+        $windowStart = null;
+
+        if ($range > 0) {
+            $anchor = $base->clone()->withConsistentDates()->max('completed_date');
+
+            if ($anchor) {
+                $windowStart = Carbon::parse($anchor)->subDays($range - 1)->startOfDay();
+            }
+        }
+
+        $volumeKirimDaily = $base->clone()
+            ->withConsistentDates()
+            ->whereNotNull('tanggal_manifest')
+            ->when($windowStart, fn ($q) => $q->where('tanggal_manifest', '>=', $windowStart))
+            ->selectRaw('DATE(tanggal_manifest) as tanggal')
+            ->selectRaw('COUNT(*) as total')
+            ->groupByRaw('DATE(tanggal_manifest)')
+            ->orderBy('tanggal')
+            ->get()
+            ->keyBy('tanggal');
+
+        $volumeSelesaiDaily = $base->clone()
+            ->withConsistentDates()
+            ->whereNotNull('completed_date')
+            ->where('status_akhir', 'Completed')
+            ->when($windowStart, fn ($q) => $q->where('completed_date', '>=', $windowStart))
+            ->selectRaw('DATE(completed_date) as tanggal')
+            ->selectRaw('COUNT(*) as total')
+            ->groupByRaw('DATE(completed_date)')
+            ->orderBy('tanggal')
+            ->get()
+            ->keyBy('tanggal');
+
+        $outSlaDaily = $base->clone()
+            ->withConsistentDates()
+            ->whereNotNull('completed_date')
+            ->when(
+                $slaMode === 'vendor',
+                fn ($q) => $q->outSlaVendor(),
+                fn ($q) => $q->outSla()
+            )
+            ->when($windowStart, fn ($q) => $q->where('completed_date', '>=', $windowStart))
+            ->selectRaw('DATE(completed_date) as tanggal')
+            ->selectRaw('COUNT(*) as volume_out')
+            ->groupByRaw('DATE(completed_date)')
+            ->orderBy('tanggal')
+            ->get()
+            ->keyBy('tanggal');
+
+        $slaComplianceDaily = $base->clone()
+            ->withConsistentDates()
+            ->whereNotNull('completed_date')
+            ->when(
+                $slaMode === 'vendor',
+                fn ($q) => $q->slaVendorVerifiable(),
+                fn ($q) => $q->slaVerifiable()
+            )
+            ->when($windowStart, fn ($q) => $q->where('completed_date', '>=', $windowStart))
+            ->selectRaw('DATE(completed_date) as tanggal')
+            ->selectRaw($slaMode === 'vendor'
+                ? "SUM(CASE WHEN sla_vendor_result = 'Meet SLA' THEN 1 ELSE 0 END) as meet"
+                : 'SUM(CASE WHEN completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet')
+            ->selectRaw('COUNT(*) as total')
+            ->groupByRaw('DATE(completed_date)')
+            ->orderBy('tanggal')
+            ->get()
+            ->keyBy('tanggal');
+
+        $trendDates = collect()
+            ->merge($volumeKirimDaily->keys())
+            ->merge($volumeSelesaiDaily->keys())
+            ->merge($outSlaDaily->keys())
+            ->merge($slaComplianceDaily->keys())
+            ->unique()
+            ->sort()
+            ->values();
+
+        $axis = collect();
+
+        if ($trendDates->isNotEmpty()) {
+            $first = Carbon::parse($trendDates->first())->startOfDay();
+            $last = Carbon::parse($trendDates->last())->startOfDay();
+
+            if ($first->diffInDays($last) <= 366) {
+                for ($cursor = $first->copy(); $cursor->lte($last); $cursor->addDay()) {
+                    $axis->push($cursor->toDateString());
+                }
+            } else {
+                $axis = $trendDates;
+            }
+        }
+
+        return [
+            'labels' => $axis->map(fn ($date) => Carbon::parse($date)->format($range === 0 ? 'd M y' : 'd M'))->values()->all(),
+            'kirim' => $axis->map(fn ($date) => (int) ($volumeKirimDaily[$date]->total ?? 0))->values()->all(),
+            'selesai' => $axis->map(fn ($date) => (int) ($volumeSelesaiDaily[$date]->total ?? 0))->values()->all(),
+            'outSla' => $axis->map(fn ($date) => (int) ($outSlaDaily[$date]->volume_out ?? 0))->values()->all(),
+            'compliance' => $axis->map(function ($date) use ($slaComplianceDaily) {
+                $row = $slaComplianceDaily[$date] ?? null;
+
+                if (! $row || (int) $row->total <= 0) {
+                    return null;
+                }
+
+                return (int) round(((int) $row->meet / (int) $row->total) * 100);
+            })->values()->all(),
+        ];
     }
 
     /**

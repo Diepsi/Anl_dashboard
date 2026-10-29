@@ -34,8 +34,10 @@ class Shipment extends Model
         'status_invoice',
         'stagging',
         'sla',
+        'sla_vendor_days',
         'sla_due_date',
         'sla_result',
+        'sla_vendor_result',
         'bast_tgl_balik',
         'bast_tgl_ke_finance',
         'bast_keterangan',
@@ -43,7 +45,7 @@ class Shipment extends Model
 
     protected $guarded = ['id'];
 
-    protected $appends = ['sla_verdict'];
+    protected $appends = ['sla_verdict', 'sla_vendor_verdict'];
 
     protected function casts(): array
     {
@@ -56,6 +58,7 @@ class Shipment extends Model
             'sla_threshold_days' => 'integer',
             'harga_per_shipment' => 'decimal:2',
             'sla' => 'integer',
+            'sla_vendor_days' => 'integer',
             'sla_due_date' => 'date',
             'bast_tgl_balik' => 'date',
             'bast_tgl_ke_finance' => 'date',
@@ -86,10 +89,40 @@ class Shipment extends Model
             : 'Out SLA';
     }
 
+    public function getSlaVendorVerdictAttribute(): ?string
+    {
+        return match (strtoupper(trim((string) $this->sla_vendor_result))) {
+            'MEET SLA' => 'Meet SLA',
+            'OVER SLA', 'OUT SLA' => 'Out SLA',
+            default => null,
+        };
+    }
+
+    /** Baris dengan No Resi yang benar-benar berasal dari kolom resi. */
+    public function scopeHasValidResi($query)
+    {
+        return $query->whereNotNull('no_resi')->where('no_resi', '!=', '');
+    }
+
     /** Baris yang punya ambang dan tanggal selesai, jadi verdict-nya bisa dihitung. */
     public function scopeSlaVerifiable($query)
     {
         return $query->whereNotNull('sla_due_date')->whereNotNull('completed_date');
+    }
+
+    public function scopeSlaVendorVerifiable($query)
+    {
+        return $query->whereIn('sla_vendor_result', ['Meet SLA', 'Over SLA', 'Out SLA']);
+    }
+
+    public function scopeOutSlaVendor($query)
+    {
+        return $query->whereIn('sla_vendor_result', ['Over SLA', 'Out SLA']);
+    }
+
+    public function scopeMeetSlaVendor($query)
+    {
+        return $query->where('sla_vendor_result', 'Meet SLA');
     }
 
     public function scopeOutSla($query)

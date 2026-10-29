@@ -21,6 +21,8 @@ class ShipmentsController extends Controller
         $provinsi = $request->input('provinsi');
         $stagging = $request->input('stagging');
         $sla = $request->input('sla');
+        $resi = $request->input('resi', 'valid');
+        $resi = in_array($resi, ['valid', 'invalid', 'all'], true) ? $resi : 'valid';
         $search = trim((string) $request->input('search'));
 
         $shipments = $this->filteredQuery($request)
@@ -53,6 +55,7 @@ class ShipmentsController extends Controller
             'provinsi',
             'stagging',
             'sla',
+            'resi',
             'search',
             'shipments',
             'statuses',
@@ -88,10 +91,12 @@ class ShipmentsController extends Controller
             'tgl_sampai_kota_tujuan' => 'Tgl Sampai Kota Tujuan',
             'koli' => 'KOLI',
             'sla' => 'SLA (hari)',
+            'sla_vendor_days' => 'SLA Vendor (hari)',
             'sla_threshold_days' => 'Ambang SLA (hari)',
             'sla_due_date' => 'Batas SLA',
             'sla_verdict' => 'Status SLA',
             'sla_result' => 'Verdict Sheet',
+            'sla_vendor_result' => 'Hasil SLA Vendor',
             'status_akhir' => 'Status Akhir',
             'status_instalasi' => 'Status Instalasi',
             'harga_per_shipment' => 'Harga / Shipment',
@@ -285,6 +290,16 @@ class ShipmentsController extends Controller
     {
         $query = Shipment::query();
 
+        $resi = $request->input('resi', 'valid');
+
+        if ($resi === 'invalid') {
+            $query->where(function ($q) {
+                $q->whereNull('no_resi')->orWhere('no_resi', '');
+            });
+        } elseif ($resi !== 'all') {
+            $query->hasValidResi();
+        }
+
         if ($status = $request->input('status')) {
             $query->where('status_akhir', $status);
         }
@@ -299,9 +314,13 @@ class ShipmentsController extends Controller
 
         $sla = $request->input('sla');
 
-        if ($sla === 'out') {
+        if ($sla === 'vendor_over') {
+            $query->outSlaVendor();
+        } elseif ($sla === 'vendor_meet') {
+            $query->meetSlaVendor();
+        } elseif ($sla === 'out' || $sla === 'customer_out') {
             $query->outSla();
-        } elseif ($sla === 'meet') {
+        } elseif ($sla === 'meet' || $sla === 'customer_meet') {
             $query->meetSla();
         }
 

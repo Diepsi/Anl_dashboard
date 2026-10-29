@@ -260,7 +260,7 @@ class SlaScopeConsistencyTest extends TestCase
         $user = User::factory()->create();
 
         $rows = $this->actingAs($user)
-            ->getJson(route('api.staging', ['stagging' => $stage]))
+            ->getJson(route('api.staging', ['stagging' => $stage, 'include_invalid' => 1]))
             ->assertOk()
             ->json();
 
@@ -283,7 +283,7 @@ class SlaScopeConsistencyTest extends TestCase
         $user = User::factory()->create();
 
         $rows = $this->actingAs($user)
-            ->getJson(route('api.bottleneck', ['provinsi' => 'Jawa Barat']))
+            ->getJson(route('api.bottleneck', ['provinsi' => 'Jawa Barat', 'include_invalid' => 1, 'sla_mode' => 'customer']))
             ->assertOk()
             ->json();
 

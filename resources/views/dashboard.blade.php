@@ -62,6 +62,16 @@
                     </a>
                 @endforeach
             </div>
+            <div class="flex items-center gap-1 p-1 rounded-lg bg-white border border-slate-200">
+                <span class="px-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase">SLA</span>
+                @foreach (['vendor' => 'Vendor', 'customer' => 'Customer'] as $mode => $label)
+                    <a href="{{ request()->fullUrlWithQuery(['sla_mode' => $mode]) }}"
+                       class="px-3 py-1.5 rounded-md text-sm font-semibold transition
+                              {{ $slaMode === $mode ? 'bg-slate-800 text-white shadow' : 'text-slate-600 hover:bg-slate-50' }}">
+                        {{ $label }}
+                    </a>
+                @endforeach
+            </div>
             @if (auth()->user()?->isAdmin())
                 <form method="POST" action="{{ route('sync') }}">
                     @csrf
@@ -80,6 +90,12 @@
             </div>
         </div>
     </div>
+
+    @if ($slaModeFallback)
+        <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Kolom SLA vendor belum tersedia di data ini, jadi KPI sementara memakai hitungan tanggal customer.
+        </p>
+    @endif
 
     @if (session('status'))
         <div class="p-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
@@ -156,6 +172,16 @@
                     @endif
                 </p>
             @endif
+            @if ($invalidTotal > 0)
+                <p class="mt-2 text-xs text-slate-500 leading-relaxed">
+                    KPI memakai <span class="font-semibold text-slate-700">{{ number_format($validDbTotal, 0, ',', '.') }}</span>
+                    resi valid. <span class="font-semibold text-amber-700">{{ number_format($invalidTotal, 0, ',', '.') }}</span>
+                    baris tanpa No Resi valid tidak dihitung.
+                    <a href="{{ route('shipments', ['resi' => 'invalid']) }}" class="font-semibold text-cyan-700 hover:text-cyan-800 underline">
+                        Lihat barisnya
+                    </a>
+                </p>
+            @endif
             @if (! empty($malformedResi))
                 <details class="mt-2 group">
                     <summary class="text-xs font-semibold text-red-700 cursor-pointer hover:text-red-800 select-none">
@@ -203,7 +229,7 @@
                 <div class="min-w-0">
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Total Shipments</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($totalShipment, 0, ',', '.') }}</p>
-                    <p class="mt-1 text-xs text-slate-400">Total keseluruhan resi</p>
+                    <p class="mt-1 text-xs text-slate-400">Total resi valid pada filter ini</p>
                     @if ($koliRows > 0)
                         <p class="mt-2 text-xs text-slate-500">
                             <span class="font-semibold text-slate-700">{{ number_format($totalKoli, 0, ',', '.') }}</span> koli
@@ -267,6 +293,9 @@
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Hold</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($holdCount, 0, ',', '.') }}</p>
                     <p class="mt-1 text-xs text-slate-400">Ditahan / menunggu follow-up</p>
+                    @if ($invalidTotal > 0)
+                        <p class="mt-1 text-[11px] leading-snug text-slate-400">Hanya baris dengan No Resi valid.</p>
+                    @endif
                 </div>
                 <div class="p-2.5 rounded-lg bg-orange-500/10 shrink-0">
                     <svg class="w-6 h-6 text-orange-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -299,7 +328,7 @@
                 <div class="min-w-0">
                     <p class="text-xs font-semibold tracking-wider text-slate-500 uppercase">Within SLA</p>
                     <p class="mt-2 text-3xl font-bold text-slate-900">{{ number_format($withinSla, 0, ',', '.') }}</p>
-                    <p class="mt-1 text-xs text-slate-400">Tepat & sesuai SLA terverifikasi</p>
+                    <p class="mt-1 text-xs text-slate-400">Tepat & sesuai SLA {{ $slaModeLabel }}</p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-emerald-500/10 shrink-0">
                     <svg class="w-6 h-6 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -319,7 +348,14 @@
                         Berjalan <span class="font-semibold text-red-600">{{ number_format($outSlaActive) }}</span>
                         · selesai <span class="font-semibold">{{ number_format($outSlaDone) }}</span>
                     </p>
-                    <p class="mt-1 text-[11px] leading-snug text-slate-400">Hanya dihitung pada kiriman berambang SLA valid.</p>
+                    <p class="mt-1 text-[11px] leading-snug text-slate-400">
+                        Sumber: <span class="font-semibold text-slate-500">{{ $slaModeLabel }}</span>
+                        @if ($slaMode === 'vendor')
+                            · mengikuti label RESULT FOR VENDOR
+                        @else
+                            · dihitung dari tanggal
+                        @endif
+                    </p>
                 </div>
                 <div class="p-2.5 rounded-lg bg-red-600/10 shrink-0">
                     <svg class="w-6 h-6 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
@@ -347,9 +383,9 @@
                     </p>
                     <p class="mt-1 text-[11px] leading-snug text-slate-400">
                         Dari <span class="font-semibold text-slate-500">{{ number_format($slaCovered) }}</span>
-                        kiriman berambang SLA valid
+                        kiriman dengan SLA {{ $slaModeLabel }}
                         @if ($slaUnverified > 0)
-                            · <span class="font-semibold text-amber-600">{{ number_format($slaUnverified) }}</span> tanpa ambang SLA terverifikasi, tidak dihitung
+                            · <span class="font-semibold text-amber-600">{{ number_format($slaUnverified) }}</span> tanpa SLA terverifikasi, tidak dihitung
                         @endif
                     </p>
                 </div>
@@ -433,7 +469,7 @@
             <div class="mb-4">
                 <h2 class="text-lg font-bold text-slate-900">SLA Compliance Rate</h2>
                 <p class="text-sm text-slate-500">
-                    Tingkat pemenuhan SLA pada {{ number_format($slaCovered) }} kiriman berambang SLA valid
+                    Tingkat pemenuhan SLA {{ $slaModeLabel }} pada {{ number_format($slaCovered) }} kiriman
                 </p>
             </div>
             <div class="relative h-[260px]">
@@ -512,7 +548,7 @@
                     <tr class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500 border-b border-slate-200">
                         <th class="px-6 py-3 font-semibold">Vendor LM</th>
                         <th class="px-6 py-3 font-semibold">Total Resi</th>
-                        <th class="px-6 py-3 font-semibold">On-Time (SLA)</th>
+                        <th class="px-6 py-3 font-semibold">On-Time ({{ $slaModeLabel }})</th>
                         <th class="px-6 py-3 font-semibold">Median Durasi</th>
                         <th class="px-6 py-3 font-semibold">p90 Durasi</th>
                     </tr>
@@ -700,7 +736,7 @@
                                 </td>
                                 <td class="px-4 py-3">
                                     @php
-                                        $verdict = $ship->sla_verdict;
+                                        $verdict = $slaMode === 'vendor' ? $ship->sla_vendor_verdict : $ship->sla_verdict;
                                     @endphp
                                     <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
                                         @if ($verdict === 'Out SLA') bg-red-50 text-red-600 border border-red-200
@@ -791,7 +827,7 @@
                                 </span>
                             </td>
                             <td class="px-6 py-3.5">
-                                @php $verdict = $ship->sla_verdict; @endphp
+                                @php $verdict = $slaMode === 'vendor' ? $ship->sla_vendor_verdict : $ship->sla_verdict; @endphp
                                 <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
                                     {{ match ($verdict) {
                                         'Out SLA' => 'bg-red-50 text-red-600 border border-red-200',
@@ -862,8 +898,8 @@
                                 </td>
                                 <td class="px-6 py-3">
                                     <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold"
-                                          :class="slaBadgeClass(row.sla_due_date, row.completed_date)"
-                                          x-text="slaBadgeLabel(row.sla_due_date, row.completed_date)"></span>
+                                          :class="rowSlaBadgeClass(row)"
+                                          x-text="rowSlaBadgeLabel(row)"></span>
                                 </td>
                             </tr>
                         </template>
@@ -957,6 +993,7 @@ document.addEventListener('alpine:init', () => {
         modalRowsFound: 0,
         modalLoading: false,
         modalError: '',
+        slaMode: @json($slaMode),
         statusClass(status) {
             return {
                 'Completed': 'bg-green-100 text-green-700',
@@ -981,8 +1018,25 @@ document.addEventListener('alpine:init', () => {
 
             return String(completed).slice(0, 10) <= String(due).slice(0, 10) ? 'Meet SLA' : 'Out SLA';
         },
-        slaBadgeClass(due, completed) {
-            const verdict = this.slaVerdict(due, completed);
+        rowSlaVerdict(row) {
+            if (this.slaMode === 'vendor') {
+                const value = String(row.sla_vendor_result || '').trim().toUpperCase();
+
+                if (value === 'MEET SLA') {
+                    return 'Meet SLA';
+                }
+
+                if (value === 'OVER SLA' || value === 'OUT SLA') {
+                    return 'Out SLA';
+                }
+
+                return null;
+            }
+
+            return this.slaVerdict(row.sla_due_date, row.completed_date);
+        },
+        rowSlaBadgeClass(row) {
+            const verdict = this.rowSlaVerdict(row);
 
             if (verdict === 'Out SLA') {
                 return 'bg-red-50 text-red-600 border border-red-200';
@@ -994,8 +1048,8 @@ document.addEventListener('alpine:init', () => {
 
             return 'bg-slate-100 text-slate-500 border border-slate-200';
         },
-        slaBadgeLabel(due, completed) {
-            return this.slaVerdict(due, completed) ?? 'Tidak terverifikasi';
+        rowSlaBadgeLabel(row) {
+            return this.rowSlaVerdict(row) ?? 'Tidak terverifikasi';
         },
         openStaging(stage, total) {
             this.loadModal(
@@ -1009,7 +1063,7 @@ document.addEventListener('alpine:init', () => {
             this.loadModal(
                 'Over SLA — ' + provinsi,
                 'Resi yang melewati SLA terverifikasi di provinsi ini (maks. 50 tampil)',
-                '/api/shipments/bottleneck?provinsi=' + encodeURIComponent(provinsi) + '&range=' + @json($range),
+                '/api/shipments/bottleneck?provinsi=' + encodeURIComponent(provinsi) + '&range=' + @json($range) + '&sla_mode=' + @json($slaMode),
                 Number(total)
             );
         },
@@ -1068,15 +1122,11 @@ document.addEventListener('DOMContentLoaded', () => {
         new Chart(el.getContext('2d'), config);
     };
 
-    const trendLabels = @json($chartData->map(fn ($d) => \Illuminate\Support\Carbon::parse($d->tanggal)->format('d M'))->values());
-    const trendKirim = @json($chartData->pluck('volume_kirim')->map(fn ($v) => (int) $v)->values());
-    const trendSelesai = @json($chartData->pluck('volume_selesai')->map(fn ($v) => (int) $v)->values());
-    const trendOutSla = @json($chartData->map(fn ($d) => (int) ($outSlaDaily[$d->tanggal]->volume_out ?? 0))->values());
-    const trendCompliance = @json($chartData->map(function ($d) use ($slaComplianceDaily) {
-        $row = $slaComplianceDaily[$d->tanggal] ?? null;
-        if (! $row || (int) $row->total <= 0) return null;
-        return (int) round(((int) $row->meet / (int) $row->total) * 100);
-    })->values());
+    const trendLabels = @json($trend['labels']);
+    const trendKirim = @json($trend['kirim']);
+    const trendSelesai = @json($trend['selesai']);
+    const trendOutSla = @json($trend['outSla']);
+    const trendCompliance = @json($trend['compliance']);
 
     if (trendLabels.length) {
         renderChart('trendChart', {

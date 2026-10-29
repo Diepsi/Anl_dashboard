@@ -10,12 +10,16 @@ class ShipmentApiController extends Controller
     public function staging(Request $request, string $stagging)
     {
         $shipments = Shipment::query()
+            ->when(
+                $request->query('include_invalid') !== '1',
+                fn ($q) => $q->hasValidResi()
+            )
             ->inRange($this->rangeDays($request))
             ->where('stagging', $stagging)
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(50)
-            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'tanggal_manifest', 'status_akhir', 'sla', 'sla_due_date', 'completed_date', 'sla_result']);
+            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'tanggal_manifest', 'status_akhir', 'sla', 'sla_vendor_days', 'sla_due_date', 'completed_date', 'sla_result', 'sla_vendor_result']);
 
         return response()->json($shipments);
     }
@@ -28,17 +32,37 @@ class ShipmentApiController extends Controller
             return response()->json(['message' => 'Parameter provinsi wajib diisi.'], 422);
         }
 
-        // scopeOutSla() menghitung ulang verdict dari completed_date vs
-        // sla_due_date, persis seperti panel pemanggilnya, dan hanya menghitung
-        // baris yang benar-benar punya ambang serta tanggal selesai.
+        $slaMode = $request->query('sla_mode') === 'customer' ? 'customer' : 'vendor';
+
+        if ($slaMode === 'vendor') {
+            $hasVendorSla = Shipment::query()
+                ->hasValidResi()
+                ->inRange($this->rangeDays($request))
+                ->where('provinsi', $provinsi)
+                ->slaVendorVerifiable()
+                ->exists();
+
+            if (! $hasVendorSla) {
+                $slaMode = 'customer';
+            }
+        }
+
         $shipments = Shipment::query()
+            ->when(
+                $request->query('include_invalid') !== '1',
+                fn ($q) => $q->hasValidResi()
+            )
             ->inRange($this->rangeDays($request))
-            ->outSla()
+            ->when(
+                $slaMode === 'vendor',
+                fn ($q) => $q->outSlaVendor(),
+                fn ($q) => $q->outSla()
+            )
             ->where('provinsi', $provinsi)
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(50)
-            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'kecamatan', 'tanggal_manifest', 'completed_date', 'sla', 'sla_due_date', 'status_akhir']);
+            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'kecamatan', 'tanggal_manifest', 'completed_date', 'sla', 'sla_vendor_days', 'sla_due_date', 'status_akhir', 'sla_vendor_result']);
 
         return response()->json($shipments);
     }

@@ -6,7 +6,7 @@
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <h1 class="text-2xl font-bold text-slate-900">Data Pengiriman</h1>
-            <p class="mt-1 text-sm text-slate-500">Seluruh resi pengiriman — cari, filter, dan pantau status tiap shipment.</p>
+            <p class="mt-1 text-sm text-slate-500">Cari, filter, dan pantau status tiap shipment. Default hanya resi valid.</p>
         </div>
         <div class="flex items-center gap-2">
             {{-- Export Excel --}}
@@ -16,6 +16,7 @@
                 <input type="hidden" name="provinsi" value="{{ $provinsi }}">
                 <input type="hidden" name="stagging" value="{{ $stagging }}">
                 <input type="hidden" name="sla" value="{{ $sla }}">
+                <input type="hidden" name="resi" value="{{ $resi }}">
                 <input type="hidden" name="search" value="{{ $search }}">
                 <button type="submit"
                     class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold text-white bg-cyan-600 border border-cyan-700 hover:bg-cyan-700 transition">
@@ -43,7 +44,7 @@
 
     {{-- Filters --}}
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-        <form method="GET" action="{{ route('shipments') }}" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
+        <form method="GET" action="{{ route('shipments') }}" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3">
             <div class="xl:col-span-2">
                 <label class="block text-xs font-semibold text-slate-500 mb-1">Cari Resi / Sekolah / Penerima</label>
                 <input type="text" name="search" value="{{ $search }}"
@@ -78,14 +79,24 @@
                 </select>
             </div>
             <div>
-                <label class="block text-xs font-semibold text-slate-500 mb-1">SLA Result</label>
+                <label class="block text-xs font-semibold text-slate-500 mb-1">SLA</label>
                 <select name="sla" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm">
                     <option value="">Semua</option>
-                    <option value="meet" @selected($sla === 'meet')>Meet SLA</option>
-                    <option value="out" @selected($sla === 'out')>Out SLA</option>
+                    <option value="vendor_meet" @selected($sla === 'vendor_meet')>Meet — Vendor (sheet)</option>
+                    <option value="vendor_over" @selected($sla === 'vendor_over')>Over — Vendor (sheet)</option>
+                    <option value="customer_meet" @selected(in_array($sla, ['customer_meet', 'meet'], true))>Meet — Customer (tanggal)</option>
+                    <option value="customer_out" @selected(in_array($sla, ['customer_out', 'out'], true))>Out — Customer (tanggal)</option>
                 </select>
             </div>
-            <div class="xl:col-span-6 flex items-center gap-2 pt-0">
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 mb-1">No Resi</label>
+                <select name="resi" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm">
+                    <option value="valid" @selected($resi === 'valid')>Valid</option>
+                    <option value="invalid" @selected($resi === 'invalid')>Tanpa resi</option>
+                    <option value="all" @selected($resi === 'all')>Semua baris</option>
+                </select>
+            </div>
+            <div class="xl:col-span-7 flex items-center gap-2 pt-0">
                 <button type="submit"
                     class="px-5 py-2 rounded-lg bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700 transition">Terapkan Filter</button>
                 <a href="{{ route('shipments') }}"
@@ -117,7 +128,8 @@
                         <th class="px-6 py-3 font-semibold">Tanggal HO</th>
                         <th class="px-6 py-3 font-semibold">Stagging</th>
                         <th class="px-6 py-3 font-semibold">Status Akhir</th>
-                        <th class="px-6 py-3 font-semibold">SLA</th>
+                        <th class="px-6 py-3 font-semibold">SLA Vendor</th>
+                        <th class="px-6 py-3 font-semibold">SLA Customer</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
@@ -129,6 +141,9 @@
                                 {{ $ship->no_resi ?? '—' }}
                                 @if ($ship->is_duplicate_no_resi)
                                     <span class="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700" title="No resi ini muncul lebih dari satu kali di sheet">duplikat</span>
+                                @endif
+                                @if (! $ship->no_resi)
+                                    <span class="ml-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600" title="No Resi di sheet kosong atau bukan format resi yang dikenali">tanpa resi</span>
                                 @endif
                             </td>
                             <td class="px-6 py-3.5 text-slate-800 font-medium max-w-[220px] truncate">{{ $ship->nama_sekolah }}</td>
@@ -159,6 +174,15 @@
                                 </span>
                             </td>
                             <td class="px-6 py-3.5">
+                                @php $vendorVerdict = $ship->sla_vendor_verdict; @endphp
+                                <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
+                                    @if ($vendorVerdict === 'Out SLA') bg-red-50 text-red-600 border border-red-200
+                                    @elseif ($vendorVerdict === 'Meet SLA') bg-emerald-50 text-emerald-600 border border-emerald-200
+                                    @else bg-slate-100 text-slate-500 border border-slate-200 @endif">
+                                    {{ $vendorVerdict ?? ($ship->sla_vendor_result ?: '—') }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-3.5">
                                 @php $verdict = $ship->sla_verdict; @endphp
                                 <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
                                     @if ($verdict === 'Out SLA') bg-red-50 text-red-600 border border-red-200
@@ -170,7 +194,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="8" class="px-6 py-10 text-center text-slate-400">Belum ada data pengiriman.</td>
+                            <td colspan="9" class="px-6 py-10 text-center text-slate-400">Belum ada data pengiriman.</td>
                         </tr>
                     @endforelse
                 </tbody>
@@ -281,11 +305,13 @@ document.addEventListener('alpine:init', () => {
                 ['Status Akhir', d.status_akhir],
                 ['Status Instalasi', d.status_instalasi],
                 ['Stagging', d.stagging],
-                ['SLA (hari)', d.sla !== null && d.sla !== undefined ? d.sla + ' hari' : null],
+                ['SLA Customer (hari)', d.sla !== null && d.sla !== undefined ? d.sla + ' hari' : null],
+                ['SLA Vendor (hari)', d.sla_vendor_days !== null && d.sla_vendor_days !== undefined ? d.sla_vendor_days + ' hari' : null],
                 ['Ambang SLA (hari)', d.sla_threshold_days !== null && d.sla_threshold_days !== undefined ? d.sla_threshold_days + ' hari' : null],
-                ['Batas SLA', fmtDate(d.sla_due_date)],
-                ['Status SLA', d.sla_verdict ?? 'Tidak terverifikasi'],
-                ['Verdict Sheet', d.sla_result],
+                ['Batas SLA Customer', fmtDate(d.sla_due_date)],
+                ['Status SLA Customer (tanggal)', d.sla_verdict ?? 'Tidak terverifikasi'],
+                ['Hasil SLA Vendor (sheet)', d.sla_vendor_result],
+                ['Verdict Sheet Customer', d.sla_result],
                 ['Harga Per Shipment', d.harga_per_shipment ? 'Rp ' + Number(d.harga_per_shipment).toLocaleString('id-ID') : null],
                 ['Status Invoice', d.status_invoice],
             ];

@@ -37,7 +37,9 @@ class ShipmentSyncService
         'status_invoice' => ['Status Invoice'],
         'stagging' => ['Update Stagging', 'Status update'],
         'sla' => ['SLA', 'SLA for DB'],
+        'sla_vendor_days' => ['SLA FOR VENDOR', 'SLA For Vendor', 'SLA Vendor'],
         'sla_result' => ['Result Delivery for Panthera', 'Result Delivery', 'Result Delivery for DB'],
+        'sla_vendor_result' => ['RESULT FOR VENDOR', 'Result for Vendor'],
         'bast_tgl_balik' => ['TGL BAST BALIK DARI VENDOR'],
         'bast_tgl_ke_finance' => ['TGL HO BAST KE FINANCE', 'TGL HO BAST KE FINENCE'],
         'bast_keterangan' => ['KETERANGAN BAST', 'KETERANGAN BAST BALIK'],
@@ -344,8 +346,10 @@ class ShipmentSyncService
      */
     protected function isEmptyShipment(array $data): bool
     {
+        $ignored = ['no_resi', 'sla_vendor_days', 'sla_vendor_result'];
+
         foreach ($data as $key => $value) {
-            if ($key === 'no_resi' || $value === null) {
+            if (in_array($key, $ignored, true) || $value === null) {
                 continue;
             }
 
@@ -516,8 +520,10 @@ class ShipmentSyncService
             'status_invoice' => $statusInvoice,
             'stagging' => $this->cleanText($this->pick($row, $index, $this->columnMap['stagging'])),
             'sla' => $slaDays,
+            'sla_vendor_days' => $this->toThresholdDays($this->pick($row, $index, $this->columnMap['sla_vendor_days'])),
             'sla_due_date' => $slaDueDate,
             'sla_result' => $this->cleanText($this->pick($row, $index, $this->columnMap['sla_result'])),
+            'sla_vendor_result' => $this->cleanText($this->pick($row, $index, $this->columnMap['sla_vendor_result'])),
             'bast_tgl_balik' => $this->toDate($this->pick($row, $index, $this->columnMap['bast_tgl_balik'])),
             'bast_tgl_ke_finance' => $this->toDate($this->pick($row, $index, $this->columnMap['bast_tgl_ke_finance'])),
             'bast_keterangan' => $this->cleanText($this->pick($row, $index, $this->columnMap['bast_keterangan'])),
@@ -635,8 +641,9 @@ class ShipmentSyncService
     }
 
     /**
-     * No Resi hanya dianggap sah bila 13-18 digit angka. Nilai lain (#N/A,
-     * formula, teks kosong) ditolak agar tidak ikut terhitung sebagai pengiriman.
+     * No Resi dianggap sah bila 13-18 digit angka, atau format alfanumerik
+     * BOMA seperti "26P296011490159". Nilai lain (#N/A, formula, teks kosong)
+     * ditolak agar tidak ikut terhitung sebagai pengiriman.
      *
      * Google Sheets menampilkan no resi sebagai angka, jadi yang 15-16 digit
      * keluar dalam notasi ilmiah ("1,01E+15", "1.009.400.821.166.140,00").
@@ -649,6 +656,10 @@ class ShipmentSyncService
 
         if ($value === '' || str_starts_with($value, '#')) {
             return null;
+        }
+
+        if (preg_match('/^[0-9]{2}[A-Za-z][0-9]{12,15}$/', $value)) {
+            return strtoupper($value);
         }
 
         if (preg_match('/^([0-9][0-9.,]*)[eE]\s*\+(\d{1,4})$/', $value, $m)) {

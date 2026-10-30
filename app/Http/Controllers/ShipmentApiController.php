@@ -19,7 +19,7 @@ class ShipmentApiController extends Controller
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(50)
-            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'tanggal_manifest', 'status_akhir', 'sla', 'sla_vendor_days', 'sla_due_date', 'completed_date', 'sla_result', 'sla_vendor_result']);
+            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'tanggal_manifest', 'tgl_resi', 'tgl_ho_sartrans', 'status_akhir', 'sla', 'sla_vendor_days', 'sla_due_date', 'tgl_delivered_panthera', 'sla_result', 'sla_vendor_result']);
 
         return response()->json($shipments);
     }
@@ -32,7 +32,9 @@ class ShipmentApiController extends Controller
             return response()->json(['message' => 'Parameter provinsi wajib diisi.'], 422);
         }
 
-        $slaMode = $request->query('sla_mode') === 'customer' ? 'customer' : 'vendor';
+        // Default ke mode SLA Panthera ('customer'). Mode 'vendor' hanya aktif jika dikirim eksplisit di query.
+        $requestedSlaMode = $request->query('sla_mode');
+        $slaMode = $requestedSlaMode === 'vendor' ? 'vendor' : 'customer';
 
         if ($slaMode === 'vendor') {
             $hasVendorSla = Shipment::query()
@@ -62,7 +64,7 @@ class ShipmentApiController extends Controller
             ->orderByDesc('tanggal_manifest')
             ->orderByDesc('id')
             ->limit(50)
-            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'kecamatan', 'tanggal_manifest', 'completed_date', 'sla', 'sla_vendor_days', 'sla_due_date', 'status_akhir', 'sla_vendor_result']);
+            ->get(['id', 'no_resi', 'is_duplicate_no_resi', 'nama_sekolah', 'provinsi', 'kota_kabupaten', 'kecamatan', 'tanggal_manifest', 'tgl_resi', 'tgl_ho_sartrans', 'tgl_delivered_panthera', 'sla', 'sla_vendor_days', 'sla_due_date', 'status_akhir', 'sla_vendor_result']);
 
         return response()->json($shipments);
     }

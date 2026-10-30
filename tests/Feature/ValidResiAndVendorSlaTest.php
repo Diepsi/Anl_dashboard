@@ -114,12 +114,13 @@ class ValidResiAndVendorSlaTest extends TestCase
         $this->assertCount(2, $bottleneckAudit);
     }
 
-    public function test_dashboard_vendor_sla_mode_follows_the_sheet_label(): void
+    public function test_dashboard_vendor_sla_mode_recomputes_from_sartrans_handover_to_delivered_date(): void
     {
         $this->shipment([
             'no_resi' => 'VENDOROVER1',
             'sla_due_date' => '2025-12-10',
-            'completed_date' => '2025-12-05',
+            'tgl_ho_sartrans' => '2025-11-01',
+            'tgl_delivered_panthera' => '2025-11-10',
             'sla_vendor_days' => 16,
             'sla_vendor_result' => 'Over SLA',
         ]);
@@ -127,14 +128,17 @@ class ValidResiAndVendorSlaTest extends TestCase
         $this->shipment([
             'no_resi' => 'VENDORMEET1',
             'sla_due_date' => '2025-12-10',
-            'completed_date' => '2025-12-05',
+            'tgl_ho_sartrans' => '2025-11-01',
+            'tgl_delivered_panthera' => '2025-12-05',
             'sla_vendor_days' => 16,
             'sla_vendor_result' => 'Meet SLA',
         ]);
 
         $user = User::factory()->create();
 
-        $vendor = $this->actingAs($user)->get(route('dashboard'))->viewData();
+        $vendor = $this->actingAs($user)
+            ->get(route('dashboard', ['sla_mode' => 'vendor']))
+            ->viewData();
         $this->assertSame('vendor', $vendor['slaMode']);
         $this->assertSame(1, $vendor['overSla']);
         $this->assertSame(1, $vendor['withinSla']);
@@ -153,17 +157,23 @@ class ValidResiAndVendorSlaTest extends TestCase
     {
         $this->shipment([
             'no_resi' => 'VENDOROVER2',
+            'tgl_ho_sartrans' => '2025-12-01',
+            'tgl_delivered_panthera' => '2025-12-20',
+            'sla_vendor_days' => 16,
             'sla_vendor_result' => 'Over SLA',
         ]);
         $this->shipment([
             'no_resi' => 'VENDORMEET2',
+            'tgl_ho_sartrans' => '2025-12-01',
+            'tgl_delivered_panthera' => '2025-12-10',
+            'sla_vendor_days' => 16,
             'sla_vendor_result' => 'Meet SLA',
         ]);
 
         $user = User::factory()->create();
 
         $over = $this->actingAs($user)
-            ->get(route('shipments', ['sla' => 'vendor_over']))
+            ->get(route('shipments', ['sla' => 'vendor_out']))
             ->viewData('shipments');
         $this->assertSame(1, $over->total());
         $this->assertSame('VENDOROVER2', $over->first()->no_resi);

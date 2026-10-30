@@ -64,7 +64,7 @@
             </div>
             <div class="flex items-center gap-1 p-1 rounded-lg bg-white border border-slate-200">
                 <span class="px-2 text-[10px] font-bold tracking-wider text-slate-400 uppercase">SLA</span>
-                @foreach (['vendor' => 'Vendor', 'customer' => 'Customer'] as $mode => $label)
+                @foreach (['customer' => 'End-to-End', 'vendor' => 'Vendor/SARTrans'] as $mode => $label)
                     <a href="{{ request()->fullUrlWithQuery(['sla_mode' => $mode]) }}"
                        class="px-3 py-1.5 rounded-md text-sm font-semibold transition
                               {{ $slaMode === $mode ? 'bg-slate-800 text-white shadow' : 'text-slate-600 hover:bg-slate-50' }}">
@@ -93,7 +93,7 @@
 
     @if ($slaModeFallback)
         <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            Kolom SLA vendor belum tersedia di data ini, jadi KPI sementara memakai hitungan tanggal customer.
+            Data SLA Vendor/SARTrans belum tersedia, jadi KPI memakai hitungan End-to-End.
         </p>
     @endif
 
@@ -540,7 +540,7 @@
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden stagger-ready">
         <div class="px-6 py-5 border-b border-slate-200">
             <h2 class="text-lg font-bold text-slate-900">Kinerja Vendor</h2>
-            <p class="text-sm text-slate-500">5 vendor teratas — kualitas on-time (SLA) & durasi kirim. Durasi memakai median/p90, hanya baris yang punya tanggal manifest. On-time hanya dihitung bila vendor punya ambang SLA terverifikasi.</p>
+            <p class="text-sm text-slate-500">5 vendor teratas — kualitas on-time (SLA) & durasi kirim. Durasi memakai median/p90 dari tanggal resi/staging ke Tgl Delivered Panthera. On-time hanya dihitung bila vendor punya ambang SLA terverifikasi.</p>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full text-left text-sm">
@@ -1003,10 +1003,6 @@ document.addEventListener('alpine:init', () => {
                 'Retur': 'bg-fuchsia-100 text-fuchsia-700',
             }[status] || 'bg-slate-100 text-slate-600';
         },
-        // Verdict dihitung ulang di browser dengan aturan yang sama persis seperti
-        // scopeOutSla()/scopeMeetSla() di server: selesai pada atau sebelum batas
-        // SLA berarti Meet. Tanpa kedua tanggal, baris tidak bisa dinilai dan harus
-        // tampil abu-abu, bukan hijau karena sumbernya menulis "Meet SLA".
         slaVerifiable(due, completed) {
             return due !== null && due !== undefined && due !== ''
                 && completed !== null && completed !== undefined && completed !== '';
@@ -1020,6 +1016,20 @@ document.addEventListener('alpine:init', () => {
         },
         rowSlaVerdict(row) {
             if (this.slaMode === 'vendor') {
+                const start = row.tgl_ho_sartrans;
+                const delivered = row.tgl_delivered_panthera;
+                const threshold = row.sla_vendor_days;
+
+                if (start && delivered && threshold !== null && threshold !== undefined) {
+                    const startDate = new Date(String(start).slice(0, 10));
+                    const deliveredDate = new Date(String(delivered).slice(0, 10));
+                    const days = Math.round((deliveredDate - startDate) / 86400000);
+
+                    if (days >= 0) {
+                        return days <= Number(threshold) ? 'Meet SLA' : 'Out SLA';
+                    }
+                }
+
                 const value = String(row.sla_vendor_result || '').trim().toUpperCase();
 
                 if (value === 'MEET SLA') {
@@ -1033,7 +1043,7 @@ document.addEventListener('alpine:init', () => {
                 return null;
             }
 
-            return this.slaVerdict(row.sla_due_date, row.completed_date);
+            return this.slaVerdict(row.sla_due_date, row.tgl_delivered_panthera);
         },
         rowSlaBadgeClass(row) {
             const verdict = this.rowSlaVerdict(row);

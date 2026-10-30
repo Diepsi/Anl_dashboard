@@ -54,8 +54,8 @@ class ClusteringService
     /**
      * CSV observasi per baris pengiriman. Kelayakan ditentukan di PHP supaya data
      * yang masuk ke model sama jujurnya dengan yang dipakai dasbor KPI SLA:
-     *  - durasi  : hanya status Completed + tanggal konsisten (manifest <= completed)
-     *  - is_out  : hanya baris terverifikasi (completed_date & sla_due_date ada)
+     *  - durasi  : hanya status Completed + tanggal konsisten (start <= delivered Panthera)
+     *  - is_out  : hanya baris terverifikasi (tgl_delivered_panthera & sla_due_date ada)
      *  - wilayah : tanpa kota/kabupaten dikecualikan (tidak bisa diidentifikasi)
      */
     public function writeObservations(string $path): void
@@ -63,18 +63,21 @@ class ClusteringService
         $handle = fopen($path, 'w');
         fputcsv($handle, ['kota_kabupaten', 'provinsi', 'durasi', 'is_out']);
 
+        $start = Shipment::endToEndStartExpression();
+        $diff = Shipment::dateDiffExpression('tgl_delivered_panthera', $start);
+
         Shipment::query()
             ->whereNotNull('kota_kabupaten')
             ->where('kota_kabupaten', '!=', '')
             ->selectRaw('kota_kabupaten')
             ->selectRaw('provinsi')
-            ->selectRaw('CASE WHEN status_akhir = "Completed"
-                AND tanggal_manifest IS NOT NULL
-                AND completed_date IS NOT NULL
-                AND tanggal_manifest <= completed_date
-                THEN DATEDIFF(completed_date, tanggal_manifest) ELSE NULL END as durasi')
-            ->selectRaw('CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL
-                THEN CASE WHEN completed_date <= sla_due_date THEN 0 ELSE 1 END
+            ->selectRaw('CASE WHEN LOWER(TRIM(status_akhir)) IN ("completed", "pod", "terkirim")
+                AND '.$start.' IS NOT NULL
+                AND tgl_delivered_panthera IS NOT NULL
+                AND '.$start.' <= tgl_delivered_panthera
+                THEN '.$diff.' ELSE NULL END as durasi')
+            ->selectRaw('CASE WHEN sla_due_date IS NOT NULL AND tgl_delivered_panthera IS NOT NULL
+                THEN CASE WHEN tgl_delivered_panthera <= sla_due_date THEN 0 ELSE 1 END
                 ELSE NULL END as is_out')
             ->orderBy('kota_kabupaten')
             ->chunk(2000, function ($rows) use ($handle) {

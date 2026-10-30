@@ -20,7 +20,8 @@ class DashboardController extends Controller
         $base = Shipment::query()->hasValidResi()->inRange($range);
 
         $requestedSlaMode = $request->query('sla_mode');
-        $slaMode = in_array($requestedSlaMode, ['vendor', 'customer'], true) ? $requestedSlaMode : 'vendor';
+        // Default diset ke 'customer' (SLA Panthera berbasis tanggal)
+        $slaMode = in_array($requestedSlaMode, ['vendor', 'customer'], true) ? $requestedSlaMode : 'customer';
         $slaModeFallback = false;
 
         $vendorSlaCovered = $base->clone()->slaVendorVerifiable()->count();
@@ -31,18 +32,14 @@ class DashboardController extends Controller
             $slaModeFallback = true;
         }
 
-        $activeStatuses = ['On Process', 'On Process Delivery', 'Dikirim', 'On Delivery', 'Undelivered', 'Hold', 'Retur'];
-
         $totalShipment = $base->clone()->count();
 
-        $completed = $base->clone()
-            ->where('status_akhir', 'Completed')
-            ->count();
+        $completed = $base->clone()->statusCompleted()->count();
 
-        $onDeliveryCount = $base->clone()->where('status_akhir', 'On Delivery')->count();
-        $undeliveredCount = $base->clone()->where('status_akhir', 'Undelivered')->count();
-        $holdCount = $base->clone()->where('status_akhir', 'Hold')->count();
-        $returCount = $base->clone()->where('status_akhir', 'Retur')->count();
+        $onDeliveryCount = $base->clone()->statusOnDelivery()->count();
+        $undeliveredCount = $base->clone()->statusUndelivered()->count();
+        $holdCount = $base->clone()->statusHold()->count();
+        $returCount = $base->clone()->statusRetur()->count();
 
         if ($slaMode === 'vendor') {
             $withinSla = $base->clone()->meetSlaVendor()->count();
@@ -50,17 +47,16 @@ class DashboardController extends Controller
             $slaCovered = $vendorSlaCovered;
             $outSlaActive = $base->clone()
                 ->outSlaVendor()
-                ->where('status_akhir', '!=', 'Completed')
+                ->statusNotCompleted()
                 ->count();
         } else {
-            // Fallback dan mode customer menghitung ulang dari completed_date vs
-            // sla_due_date, bukan dari teks verdict di sheet.
+            // Mode customer menghitung ulang dari tgl_delivered_panthera vs sla_due_date
             $withinSla = $base->clone()->meetSla()->count();
             $overSla = $base->clone()->outSla()->count();
             $slaCovered = $customerSlaCovered;
             $outSlaActive = $base->clone()
                 ->outSla()
-                ->where('status_akhir', '!=', 'Completed')
+                ->statusNotCompleted()
                 ->count();
         }
 
@@ -68,7 +64,7 @@ class DashboardController extends Controller
         $slaPct = $slaDenom > 0 ? round(($withinSla / $slaDenom) * 100) : null;
         $slaUnverified = $totalShipment - $slaCovered;
         $outSlaDone = $overSla - $outSlaActive;
-        $slaModeLabel = $slaMode === 'vendor' ? 'Vendor (Sheet)' : 'Customer (Tanggal)';
+        $slaModeLabel = $slaMode === 'vendor' ? 'Vendor/SARTrans' : 'End-to-End';
 
         $totalKoli = (int) $base->clone()->sum('koli');
         $koliRows = (int) $base->clone()->whereNotNull('koli')->count();
@@ -166,12 +162,21 @@ class DashboardController extends Controller
 
         $vendorLeadTimes = $this->leadTimeStatsByVendor($base->clone());
 
+        $vendorDiff = Shipment::dateDiffExpression('tgl_delivered_panthera', 'tgl_ho_sartrans');
+        $vendorRecognisedLabel = "UPPER(TRIM(COALESCE(sla_vendor_result, ''))) IN ('MEET SLA', 'OVER SLA', 'OUT SLA')";
+        $vendorDaysUsable = 'sla_vendor_days IS NOT NULL AND tgl_ho_sartrans <= tgl_delivered_panthera';
+        $vendorVerifiable = 'tgl_delivered_panthera IS NOT NULL AND tgl_ho_sartrans IS NOT NULL '
+            ."AND ({$vendorDaysUsable} OR {$vendorRecognisedLabel})";
+        $vendorMeet = "({$vendorDaysUsable} AND {$vendorDiff} <= sla_vendor_days) "
+            .'OR ((sla_vendor_days IS NULL OR tgl_ho_sartrans > tgl_delivered_panthera) '
+            ."AND UPPER(TRIM(COALESCE(sla_vendor_result, ''))) = 'MEET SLA')";
+
         $vendorCoveredSql = $slaMode === 'vendor'
-            ? "SUM(CASE WHEN sla_vendor_result IN ('Meet SLA', 'Over SLA', 'Out SLA') THEN 1 ELSE 0 END) as sla_covered"
-            : 'SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL THEN 1 ELSE 0 END) as sla_covered';
+            ? "SUM(CASE WHEN {$vendorVerifiable} THEN 1 ELSE 0 END) as sla_covered"
+            : 'SUM(CASE WHEN tgl_delivered_panthera IS NOT NULL AND sla_due_date IS NOT NULL THEN 1 ELSE 0 END) as sla_covered';
         $vendorMeetSql = $slaMode === 'vendor'
-            ? "SUM(CASE WHEN sla_vendor_result = 'Meet SLA' THEN 1 ELSE 0 END) as meet"
-            : 'SUM(CASE WHEN sla_due_date IS NOT NULL AND completed_date IS NOT NULL AND completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet';
+            ? "SUM(CASE WHEN ({$vendorVerifiable}) AND ({$vendorMeet}) THEN 1 ELSE 0 END) as meet"
+            : 'SUM(CASE WHEN tgl_delivered_panthera IS NOT NULL AND sla_due_date IS NOT NULL AND tgl_delivered_panthera <= sla_due_date THEN 1 ELSE 0 END) as meet';
 
         $vendorStats = $base->clone()
             ->whereNotNull('vendor_lm')
@@ -212,10 +217,7 @@ class DashboardController extends Controller
             ->limit(8)
             ->get();
 
-        // Anchor memakai tanggal selesai terakhir yang konsisten (bukan MAX(tanggal_manifest),
-        // yang bisa didominasi baris korup). Tanpa ini semua kiriman aktif jatuh ke bucket
-        // usia tertua karena tertaut ke spike tanggal yang tidak logis.
-        $rangeLatestRaw = $base->clone()->withConsistentDates()->max('completed_date');
+        $rangeLatestRaw = $base->clone()->withConsistentDates()->max('tgl_delivered_panthera');
         $agingAnchor = $rangeLatestRaw ? Carbon::parse($rangeLatestRaw)->toDateString() : Carbon::today()->toDateString();
 
         $agingBuckets = collect([
@@ -227,7 +229,7 @@ class DashboardController extends Controller
 
         $agingRows = $base->clone()
             ->withConsistentDates()
-            ->whereIn('status_akhir', $activeStatuses)
+            ->statusActive()
             ->whereNotNull('tanggal_manifest')
             ->selectRaw('CASE
                 WHEN DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) <= 14 THEN "≤ 14 hari"
@@ -247,30 +249,23 @@ class DashboardController extends Controller
 
         $agingExcluded = $base->clone()
             ->withConsistentDates()
-            ->whereIn('status_akhir', $activeStatuses)
+            ->statusActive()
             ->whereNull('tanggal_manifest')
             ->count();
 
         $attentionShipments = $base->clone()
             ->withConsistentDates()
-            ->whereIn('status_akhir', $activeStatuses)
+            ->statusActive()
             ->selectRaw('*, DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) as days_open')
             ->where(function ($q) use ($agingAnchor) {
-                // Status bermasalah masuk tanpa syarat tanggal: Retur (6 resi) tidak punya
-                // tanggal HO ke Vendor sama sekali, jadi REQUIRE tanggal di luar cabang
-                // ini akan membuangnya diam-diam. Ambang usia hanya berlaku untuk baris
-                // yang memang punya tanggal, dan sisanya tampil dengan usia "—".
-                //
-                // Baris status-bermasalah didahulukan: kalau hanya diurutkan usia, Retur
-                // punya days_open NULL dan akan selalu tersingkir paling akhir oleh
-                // On Delivery yang sudah tua — persis baris yang tidak boleh hilang.
-                $q->whereIn('status_akhir', ['Hold', 'Undelivered', 'Retur'])
-                    ->orWhere(function ($q2) use ($agingAnchor) {
-                        $q2->whereNotNull('tanggal_manifest')
-                            ->whereRaw('DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) >= 14');
-                    });
+                $q->where(function ($q2) {
+                    $q2->statusHold()->orWhere(fn ($q3) => $q3->statusUndelivered());
+                })->orWhere(function ($q2) use ($agingAnchor) {
+                    $q2->whereNotNull('tanggal_manifest')
+                        ->whereRaw('DATEDIFF(DATE("'.$agingAnchor.'"), DATE(tanggal_manifest)) >= 14');
+                });
             })
-            ->orderByRaw('CASE WHEN status_akhir IN ("Hold", "Undelivered", "Retur") THEN 0 ELSE 1 END')
+            ->orderByRaw('CASE WHEN LOWER(TRIM(status_akhir)) IN ("hold", "pending", "ditahan", "undelivered", "gagal kirim", "gagal", "retur") THEN 0 ELSE 1 END')
             ->orderByRaw('COALESCE(days_open, 0) DESC')
             ->orderBy('id', 'desc')
             ->limit(25)
@@ -333,7 +328,7 @@ class DashboardController extends Controller
         $windowStart = null;
 
         if ($range > 0) {
-            $anchor = $base->clone()->withConsistentDates()->max('completed_date');
+            $anchor = $base->clone()->withConsistentDates()->max('tgl_delivered_panthera');
 
             if ($anchor) {
                 $windowStart = Carbon::parse($anchor)->subDays($range - 1)->startOfDay();
@@ -353,47 +348,53 @@ class DashboardController extends Controller
 
         $volumeSelesaiDaily = $base->clone()
             ->withConsistentDates()
-            ->whereNotNull('completed_date')
-            ->where('status_akhir', 'Completed')
-            ->when($windowStart, fn ($q) => $q->where('completed_date', '>=', $windowStart))
-            ->selectRaw('DATE(completed_date) as tanggal')
+            ->whereNotNull('tgl_delivered_panthera')
+            ->statusCompleted()
+            ->when($windowStart, fn ($q) => $q->where('tgl_delivered_panthera', '>=', $windowStart))
+            ->selectRaw('DATE(tgl_delivered_panthera) as tanggal')
             ->selectRaw('COUNT(*) as total')
-            ->groupByRaw('DATE(completed_date)')
+            ->groupByRaw('DATE(tgl_delivered_panthera)')
             ->orderBy('tanggal')
             ->get()
             ->keyBy('tanggal');
 
         $outSlaDaily = $base->clone()
             ->withConsistentDates()
-            ->whereNotNull('completed_date')
+            ->whereNotNull('tgl_delivered_panthera')
             ->when(
                 $slaMode === 'vendor',
                 fn ($q) => $q->outSlaVendor(),
                 fn ($q) => $q->outSla()
             )
-            ->when($windowStart, fn ($q) => $q->where('completed_date', '>=', $windowStart))
-            ->selectRaw('DATE(completed_date) as tanggal')
+            ->when($windowStart, fn ($q) => $q->where('tgl_delivered_panthera', '>=', $windowStart))
+            ->selectRaw('DATE(tgl_delivered_panthera) as tanggal')
             ->selectRaw('COUNT(*) as volume_out')
-            ->groupByRaw('DATE(completed_date)')
+            ->groupByRaw('DATE(tgl_delivered_panthera)')
             ->orderBy('tanggal')
             ->get()
             ->keyBy('tanggal');
 
+        $vendorDiff = Shipment::dateDiffExpression('tgl_delivered_panthera', 'tgl_ho_sartrans');
+        $vendorDaysUsable = 'sla_vendor_days IS NOT NULL AND tgl_ho_sartrans <= tgl_delivered_panthera';
+        $vendorMeet = "({$vendorDaysUsable} AND {$vendorDiff} <= sla_vendor_days) "
+            .'OR ((sla_vendor_days IS NULL OR tgl_ho_sartrans > tgl_delivered_panthera) '
+            ."AND UPPER(TRIM(COALESCE(sla_vendor_result, ''))) = 'MEET SLA')";
+
         $slaComplianceDaily = $base->clone()
             ->withConsistentDates()
-            ->whereNotNull('completed_date')
+            ->whereNotNull('tgl_delivered_panthera')
             ->when(
                 $slaMode === 'vendor',
                 fn ($q) => $q->slaVendorVerifiable(),
                 fn ($q) => $q->slaVerifiable()
             )
-            ->when($windowStart, fn ($q) => $q->where('completed_date', '>=', $windowStart))
-            ->selectRaw('DATE(completed_date) as tanggal')
+            ->when($windowStart, fn ($q) => $q->where('tgl_delivered_panthera', '>=', $windowStart))
+            ->selectRaw('DATE(tgl_delivered_panthera) as tanggal')
             ->selectRaw($slaMode === 'vendor'
-                ? "SUM(CASE WHEN sla_vendor_result = 'Meet SLA' THEN 1 ELSE 0 END) as meet"
-                : 'SUM(CASE WHEN completed_date <= sla_due_date THEN 1 ELSE 0 END) as meet')
+                ? "SUM(CASE WHEN {$vendorMeet} THEN 1 ELSE 0 END) as meet"
+                : 'SUM(CASE WHEN tgl_delivered_panthera <= sla_due_date THEN 1 ELSE 0 END) as meet')
             ->selectRaw('COUNT(*) as total')
-            ->groupByRaw('DATE(completed_date)')
+            ->groupByRaw('DATE(tgl_delivered_panthera)')
             ->orderBy('tanggal')
             ->get()
             ->keyBy('tanggal');
@@ -439,19 +440,11 @@ class DashboardController extends Controller
         ];
     }
 
-    /**
-     * Delivery-duration statistics for completed shipments.
-     *
-     * Uses median and p90 instead of the mean: a single batch of source rows whose
-     * tanggal_manifest is later than completed_date was enough to drag the average
-     * to a negative number, while the median stayed at a believable 13 days.
-     */
     protected function leadTimeStats($query): array
     {
         return $this->statsFromValues($this->leadTimeValues($query));
     }
 
-    /** Same metric grouped per vendor, so vendors stay comparable. */
     protected function leadTimeStatsByVendor($query): array
     {
         $values = $this->leadTimeValues($query, 'vendor_lm');
@@ -479,21 +472,17 @@ class DashboardController extends Controller
         ];
     }
 
-    /**
-     * Duration in days between manifest and completion.
-     *
-     * Rows with an impossible date order are dropped instead of being clamped, so a
-     * corrupt source row can never distort the metric. Returned sorted; when $groupBy
-     * is given the result stays keyed by that column.
-     */
     protected function leadTimeValues($query, ?string $groupBy = null)
     {
+        $start = Shipment::endToEndStartExpression();
+        $diff = Shipment::dateDiffExpression('tgl_delivered_panthera', $start);
+
         $rows = $query
             ->withConsistentDates()
-            ->whereNotNull('completed_date')
-            ->whereNotNull('tanggal_manifest')
-            ->where('status_akhir', 'Completed')
-            ->selectRaw('DATEDIFF(completed_date, tanggal_manifest) as d'.($groupBy ? ', '.$groupBy : ''))
+            ->whereNotNull('tgl_delivered_panthera')
+            ->whereRaw($start.' IS NOT NULL')
+            ->statusCompleted()
+            ->selectRaw($diff.' as d'.($groupBy ? ', '.$groupBy : ''))
             ->get();
 
         $clean = fn ($row) => (int) $row->d;

@@ -227,4 +227,31 @@ class DashboardMetricIntegrityTest extends TestCase
 
         $this->assertSame(0, $data, 'Nothing here has a usable threshold, so the KPI must say so.');
     }
+
+    public function test_status_counts_are_case_insensitive_and_include_aliases(): void
+    {
+        $this->shipment(['no_resi' => 'C1', 'status_akhir' => 'POD']);
+        $this->shipment(['no_resi' => 'C2', 'status_akhir' => 'terkirim']);
+        $this->shipment(['no_resi' => 'C3', 'status_akhir' => 'Completed']);
+        $this->shipment(['no_resi' => 'C4', 'status_akhir' => 'Status Tidak Dikenal', 'completed_date' => '2025-12-11']);
+
+        $this->shipment(['no_resi' => 'OD1', 'status_akhir' => 'In Transit']);
+        $this->shipment(['no_resi' => 'OD2', 'status_akhir' => 'Sedang DIkirim']);
+        $this->shipment(['no_resi' => 'OD3', 'status_akhir' => 'On Delivery', 'completed_date' => '2025-12-11']);
+
+        $this->shipment(['no_resi' => 'U1', 'status_akhir' => 'Gagal Kirim']);
+        $this->shipment(['no_resi' => 'U2', 'status_akhir' => 'Retur']);
+
+        $this->shipment(['no_resi' => 'H1', 'status_akhir' => 'Pending']);
+        $this->shipment(['no_resi' => 'H2', 'status_akhir' => 'ditahan']);
+
+        $user = User::factory()->create();
+        $view = $this->actingAs($user)->get(route('dashboard'))->assertOk()->viewData();
+
+        $this->assertSame(4, $view['completed'], 'Completed harus menangkap POD/Terkirim dan fallback tanggal.');
+        $this->assertSame(3, $view['onDeliveryCount'], 'Status On Delivery tidak boleh berpindah ke Completed hanya karena punya tanggal.');
+        $this->assertSame(2, $view['undeliveredCount'], 'Undelivered harus mencakup Gagal Kirim dan Retur.');
+        $this->assertSame(2, $view['holdCount'], 'Hold harus menangkap Pending/Ditahan tanpa peduli kapitalisasi.');
+        $this->assertSame(1, $view['returCount']);
+    }
 }

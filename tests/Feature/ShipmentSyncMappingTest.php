@@ -94,7 +94,19 @@ class ShipmentSyncMappingTest extends TestCase
         ]);
 
         $this->assertSame('2025-12-01', $data['tanggal_manifest']);
+        $this->assertSame('2025-12-01', $data['tgl_resi']);
         $this->assertSame('2025-12-05', $data['tgl_ho_sartrans']);
+    }
+
+    public function test_completed_date_is_stored_as_the_single_delivered_panthera_reference(): void
+    {
+        $data = $this->map([
+            'Tanggal HO ke Vendor' => '01/12/2025',
+            'Completed date' => '05/12/2025',
+        ]);
+
+        $this->assertSame('2025-12-05', $data['tgl_delivered_panthera']);
+        $this->assertSame('2025-12-05', $data['completed_date'], 'Kolom lama tetap diisi untuk kompatibilitas.');
     }
 
     public function test_sla_only_survives_as_a_plausible_day_count(): void
@@ -160,6 +172,18 @@ class ShipmentSyncMappingTest extends TestCase
 
         $this->assertSame(17, $data['sla']);
         $this->assertSame('2025-10-25', $data['sla_due_date']);
+    }
+
+    public function test_end_to_end_sla_is_anchored_to_the_receipt_date_when_available(): void
+    {
+        $data = $this->map([
+            'SLA' => '3',
+            'Tanggal HO ke Vendor' => '01/12/2025',
+            'Tgl HO dari SarTrans' => '05/12/2025',
+            'Completed date' => '10/12/2025',
+        ]);
+
+        $this->assertSame('2025-12-04', $data['sla_due_date']);
     }
 
     public function test_a_day_threshold_without_its_anchor_gets_no_deadline(): void

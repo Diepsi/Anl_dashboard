@@ -86,8 +86,9 @@ class ShipmentsController extends Controller
             'nama_funder' => 'Nama Funder',
             'vendor_lm' => 'Vendor LM',
             'tanggal_manifest' => 'Tanggal Manifest',
+            'tgl_resi' => 'Tgl Resi',
             'tgl_ho_sartrans' => 'Tgl HO dari SarTrans',
-            'completed_date' => 'Tanggal Selesai',
+            'tgl_delivered_panthera' => 'Tgl Delivered Panthera',
             'tgl_sampai_kota_tujuan' => 'Tgl Sampai Kota Tujuan',
             'koli' => 'KOLI',
             'sla' => 'SLA (hari)',
@@ -109,8 +110,9 @@ class ShipmentsController extends Controller
 
         $dateFields = [
             'tanggal_manifest',
+            'tgl_resi',
             'tgl_ho_sartrans',
-            'completed_date',
+            'tgl_delivered_panthera',
             'tgl_sampai_kota_tujuan',
             'sla_due_date',
             'bast_tgl_balik',
@@ -243,10 +245,15 @@ class ShipmentsController extends Controller
         if ($stagging = $request->input('stagging')) {
             $filterParts[] = 'stagging: '.$stagging;
         }
-        if ($request->input('sla') === 'out') {
-            $filterParts[] = 'SLA: Out SLA';
-        } elseif ($request->input('sla') === 'meet') {
-            $filterParts[] = 'SLA: Meet SLA';
+        $slaFilter = $request->input('sla');
+        if (in_array($slaFilter, ['out', 'customer_out'], true)) {
+            $filterParts[] = 'SLA: Out End-to-End';
+        } elseif (in_array($slaFilter, ['meet', 'customer_meet'], true)) {
+            $filterParts[] = 'SLA: Meet End-to-End';
+        } elseif (in_array($slaFilter, ['vendor_out', 'vendor_over'], true)) {
+            $filterParts[] = 'SLA: Out Vendor/SARTrans';
+        } elseif ($slaFilter === 'vendor_meet') {
+            $filterParts[] = 'SLA: Meet Vendor/SARTrans';
         }
         if ($search = trim((string) $request->input('search'))) {
             $filterParts[] = 'cari: "'.$search.'"';
@@ -265,7 +272,7 @@ class ShipmentsController extends Controller
         // tingkat keyakinan: kolom "Verdict Sheet" dan "Status SLA" terlihat setara
         // padahal yang kedua dihitung ulang dari ambang yang nyata.
         $sheet->setCellValue('A'.($metaRow + 1), sprintf(
-            '"Status SLA" = verdict yang dihitung ulang dari Completed date vs Batas SLA. '
+            '"Status SLA" = verdict End-to-End yang dihitung ulang dari Tgl Delivered Panthera vs Batas SLA. '
             .'"Verdict Sheet" = teks apa adanya dari sumber. '
             .'Kolom kosong berarti sumber tidak mengisinya, bukan nol. '
             .'Tercakup %.1f%% dari baris di file ini (%d dari %d baris terverifikasi).',
@@ -301,7 +308,7 @@ class ShipmentsController extends Controller
         }
 
         if ($status = $request->input('status')) {
-            $query->where('status_akhir', $status);
+            $query->whereRaw('LOWER(TRIM(status_akhir)) = ?', [strtolower(trim($status))]);
         }
 
         if ($provinsi = $request->input('provinsi')) {
@@ -314,14 +321,14 @@ class ShipmentsController extends Controller
 
         $sla = $request->input('sla');
 
-        if ($sla === 'vendor_over') {
+        if (in_array($sla, ['out', 'customer_out'], true)) {
+            $query->outSla();
+        } elseif (in_array($sla, ['meet', 'customer_meet'], true)) {
+            $query->meetSla();
+        } elseif (in_array($sla, ['vendor_out', 'vendor_over'], true)) {
             $query->outSlaVendor();
         } elseif ($sla === 'vendor_meet') {
             $query->meetSlaVendor();
-        } elseif ($sla === 'out' || $sla === 'customer_out') {
-            $query->outSla();
-        } elseif ($sla === 'meet' || $sla === 'customer_meet') {
-            $query->meetSla();
         }
 
         $search = trim((string) $request->input('search'));

@@ -16,7 +16,7 @@ use Tests\TestCase;
  * seluruh perhitungan SLA.
  *
  * Sync kini menyatukan kedua bentuk itu menjadi `sla_due_date`, dan verdict
- * dihitung ulang dari `completed_date` terhadap deadline tersebut. Test di sini
+ * dihitung ulang dari `tgl_delivered_panthera` terhadap deadline tersebut. Test di sini
  * mengunci hasil itu plus tiga tempat di mana panel, modal, dan filter dulu
  * berbeda jawabannya.
  */
@@ -96,6 +96,18 @@ class SlaScopeConsistencyTest extends TestCase
 
         $this->assertSame('Out SLA', $row->fresh()->sla_verdict);
         $this->assertSame('Meet SLA', $row->fresh()->sla_result);
+    }
+
+    public function test_verdict_uses_delivered_panthera_instead_of_the_legacy_completed_date(): void
+    {
+        $row = Shipment::withoutEvents(fn () => $this->shipment([
+            'no_resi' => 'LEGACY1',
+            'sla_due_date' => '2025-08-25',
+            'completed_date' => '2025-08-27',
+            'tgl_delivered_panthera' => '2025-08-23',
+        ]));
+
+        $this->assertSame('Meet SLA', $row->fresh()->sla_verdict);
     }
 
     public function test_a_day_threshold_without_its_anchor_is_not_verified(): void

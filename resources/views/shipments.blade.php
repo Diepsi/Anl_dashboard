@@ -82,10 +82,10 @@
                 <label class="block text-xs font-semibold text-slate-500 mb-1">SLA</label>
                 <select name="sla" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm">
                     <option value="">Semua</option>
-                    <option value="vendor_meet" @selected($sla === 'vendor_meet')>Meet — Vendor (sheet)</option>
-                    <option value="vendor_over" @selected($sla === 'vendor_over')>Over — Vendor (sheet)</option>
-                    <option value="customer_meet" @selected(in_array($sla, ['customer_meet', 'meet'], true))>Meet — Customer (tanggal)</option>
-                    <option value="customer_out" @selected(in_array($sla, ['customer_out', 'out'], true))>Out — Customer (tanggal)</option>
+                    <option value="customer_meet" @selected(in_array($sla, ['customer_meet', 'meet'], true))>Meet — End-to-End</option>
+                    <option value="customer_out" @selected(in_array($sla, ['customer_out', 'out'], true))>Out — End-to-End</option>
+                    <option value="vendor_meet" @selected($sla === 'vendor_meet')>Meet — Vendor/SARTrans</option>
+                    <option value="vendor_out" @selected($sla === 'vendor_out')>Out — Vendor/SARTrans</option>
                 </select>
             </div>
             <div>
@@ -128,8 +128,8 @@
                         <th class="px-6 py-3 font-semibold">Tanggal HO</th>
                         <th class="px-6 py-3 font-semibold">Stagging</th>
                         <th class="px-6 py-3 font-semibold">Status Akhir</th>
-                        <th class="px-6 py-3 font-semibold">SLA Vendor</th>
-                        <th class="px-6 py-3 font-semibold">SLA Customer</th>
+                        <th class="px-6 py-3 font-semibold">SLA Vendor/SARTrans</th>
+                        <th class="px-6 py-3 font-semibold">SLA End-to-End</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
@@ -298,20 +298,24 @@ document.addEventListener('alpine:init', () => {
                 ['Kode Funder', d.kode_funder],
                 ['Nama Funder', d.nama_funder],
                 ['Tanggal Manifest', fmtDate(d.tanggal_manifest)],
+                ['Tgl Resi', fmtDate(d.tgl_resi)],
                 ['Tgl HO dari SarTrans', fmtDate(d.tgl_ho_sartrans)],
-                ['Completed Date', fmtDate(d.completed_date)],
+                ['Tgl Delivered Panthera', fmtDate(d.tgl_delivered_panthera)],
                 ['Tgl Sampai Kota Tujuan', fmtDate(d.tgl_sampai_kota_tujuan)],
                 ['KOLI', d.koli],
                 ['Status Akhir', d.status_akhir],
                 ['Status Instalasi', d.status_instalasi],
                 ['Stagging', d.stagging],
-                ['SLA Customer (hari)', d.sla !== null && d.sla !== undefined ? d.sla + ' hari' : null],
-                ['SLA Vendor (hari)', d.sla_vendor_days !== null && d.sla_vendor_days !== undefined ? d.sla_vendor_days + ' hari' : null],
+                ['SLA End-to-End (hari)', d.sla_end_to_end_days !== null && d.sla_end_to_end_days !== undefined ? d.sla_end_to_end_days + ' hari' : null],
+                ['SLA Vendor/SARTrans (hari)', d.sla_vendor_days !== null && d.sla_vendor_days !== undefined ? d.sla_vendor_days + ' hari' : null],
+                ['Durasi Vendor/SARTrans', d.sla_vendor_actual_days !== null && d.sla_vendor_actual_days !== undefined ? d.sla_vendor_actual_days + ' hari' : null],
                 ['Ambang SLA (hari)', d.sla_threshold_days !== null && d.sla_threshold_days !== undefined ? d.sla_threshold_days + ' hari' : null],
-                ['Batas SLA Customer', fmtDate(d.sla_due_date)],
-                ['Status SLA Customer (tanggal)', d.sla_verdict ?? 'Tidak terverifikasi'],
+                ['Batas SLA End-to-End', fmtDate(d.sla_due_date)],
+                ['Batas SLA Vendor/SARTrans', fmtDate(d.sla_vendor_due_date)],
+                ['Status SLA End-to-End', d.sla_verdict ?? 'Tidak terverifikasi'],
+                ['Status SLA Vendor/SARTrans', d.sla_vendor_verdict ?? 'Tidak terverifikasi'],
                 ['Hasil SLA Vendor (sheet)', d.sla_vendor_result],
-                ['Verdict Sheet Customer', d.sla_result],
+                ['Verdict Sheet End-to-End', d.sla_result],
                 ['Harga Per Shipment', d.harga_per_shipment ? 'Rp ' + Number(d.harga_per_shipment).toLocaleString('id-ID') : null],
                 ['Status Invoice', d.status_invoice],
             ];

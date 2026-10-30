@@ -26,9 +26,10 @@ class ShipmentSyncService
         'nama_funder' => ['Nama Funder', 'Founder'],
         'vendor_lm' => ['Vendor LM'],
         'tanggal_manifest' => ['Tanggal HO ke Vendor', 'Tanggal Manifest', 'Tanggal Handover ke Vendor'],
+        'tgl_resi' => ['Tgl Resi', 'Tanggal Resi', 'Tanggal HO ke Vendor', 'Tanggal Manifest', 'Tanggal Handover ke Vendor'],
         'tgl_ho_sartrans' => ['Tgl HO dari SarTrans', 'Tanggal HO dari SarTrans'],
         'koli' => ['kOLI', 'Koli', 'KOLI', 'Jumlah Koli'],
-        'completed_date' => ['Completed date'],
+        'tgl_delivered_panthera' => ['Tgl Delivered Panthera', 'Tanggal Delivered Panthera', 'Delivered Panthera', 'Completed date'],
         'tgl_sampai_kota_tujuan' => ['Actual ETA KAPAL', 'Tgl sampai di kota tujuan'],
         'sla_threshold_days' => ['Aging', 'SLA Threshold'],
         'status_akhir' => ['Status Akhir'],
@@ -175,22 +176,12 @@ class ShipmentSyncService
 
         if ($replace) {
             Shipment::query()->delete();
-        } else {
-            // Baris lama yang nomornya ikut tayang di CSV ini disegarkan, tapi
-            // tidak digabung: nomor kembar tetap disimpan semua.
-            foreach (array_chunk($this->uniqueResi($rows), 500) as $slice) {
-                Shipment::whereIn('no_resi', $slice)->delete();
+
+            foreach (array_chunk($rows, 500) as $chunk) {
+                $this->insertRows($chunk);
             }
-
-            // Baris tanpa resi tidak bisa dicocokkan lewat whereIn (NULL), dan
-            // baris ber-NULL selalu berasal dari baris malformed/kosong CSV yang
-            // disimpan ulang di tiap putaran. Tanpa penghapusan ini setiap sync
-            // non-replace menumpuk salinan baru baris-baris itu.
-            Shipment::whereNull('no_resi')->delete();
-        }
-
-        foreach (array_chunk($rows, 500) as $chunk) {
-            $this->flush($chunk);
+        } else {
+            $this->upsertRowsByNoResi($rows);
         }
 
         $this->markDuplicateNoResi($duplicateResi);
@@ -374,19 +365,6 @@ class ShipmentSyncService
         return true;
     }
 
-    protected function uniqueResi(array $rows): array
-    {
-        $resi = [];
-
-        foreach ($rows as $data) {
-            if ($data['no_resi'] !== null) {
-                $resi[$data['no_resi']] = true;
-            }
-        }
-
-        return array_keys($resi);
-    }
-
     /**
      * Nomor resi yang muncul lebih dari satu kali di tabel ditandai, supaya pemilik
      * data tahu bahwa baris itu berbagi nomor dengan baris lain. Mustahil membedakan
@@ -468,28 +446,31 @@ class ShipmentSyncService
 
         $namaFunder = $this->cleanText($this->pick($row, $index, $this->columnMap['nama_funder']));
 
+        $tanggalManifest = $this->toDate($this->pick($row, $index, $this->columnMap['tanggal_manifest']));
+        $tglResi = $this->toDate($this->pick($row, $index, $this->columnMap['tgl_resi']));
+        $tglHo = $this->toDate($this->pick($row, $index, $this->columnMap['tgl_ho_sartrans']));
+        $tglDelivered = $this->toDate($this->pick($row, $index, $this->columnMap['tgl_delivered_panthera']));
+
         // Kolom SLA di sumber tidak pernah satu arti. BOMA mengisinya dengan ambang
         // hari ("17"), sedangkan 31 vendor lain mengisinya dengan tanggal batas
         // ("25/08/2025"). Keduanya sah dan keduanya dipakai sheet untuk menghitung
         // verdict, jadi keduanya diselesaikan menjadi satu deadline yang bisa
-        // dibandingkan langsung dengan completed_date.
+        // dibandingkan langsung dengan tgl_delivered_panthera.
         //
-        // Batas hari dihitung dari "Tgl HO dari SarTrans" karena diuji terhadap
-        // verdict sheet pada 99,1% baris; jangkar lain meleset jauh lebih jauh
-        // (completed_date 92,3%, Actual ETA KAPAL 80,6%).
+        // SLA End-to-End memakai tgl_resi sebagai jangkar, dengan urutan fallback
+        // tgl_resi -> tanggal_manifest -> tgl_ho_sartrans.
         $slaRaw = $this->pick($row, $index, $this->columnMap['sla']);
         $slaDays = $this->toSlaDays($slaRaw);
         $slaDueDate = $this->toDate($slaRaw);
 
         if ($slaDueDate === null && $slaDays !== null) {
-            $anchor = $this->toDate($this->pick($row, $index, $this->columnMap['tgl_ho_sartrans']));
-            $completed = $this->toDate($this->pick($row, $index, $this->columnMap['completed_date']));
+            $anchor = $tglResi ?? $tanggalManifest ?? $tglHo;
 
-            // Jangkar yang lebih baru dari tanggal selesai membuat deadline selalu
+            // Jangkar yang lebih baru dari tanggal delivered membuat deadline selalu
             // jatuh setelah selesai, sehingga baris itu akan terbaca "Meet SLA"
             // tanpa pernah bisa meleset. Baris seperti ini tidak bisa dinilai, jadi
             // dibiarkan tanpa deadline alih-alih diberi nilai yang selalu lulus.
-            if ($anchor !== null && ($completed === null || $anchor <= $completed)) {
+            if ($anchor !== null && ($tglDelivered === null || $anchor <= $tglDelivered)) {
                 $slaDueDate = Carbon::parse($anchor)->addDays($slaDays)->toDateString();
             }
         }
@@ -508,10 +489,12 @@ class ShipmentSyncService
             'kode_funder' => $this->nullableString($this->pick($row, $index, $this->columnMap['kode_funder'])),
             'nama_funder' => $namaFunder,
             'vendor_lm' => $this->cleanText($this->pick($row, $index, $this->columnMap['vendor_lm'])),
-            'tanggal_manifest' => $this->toDate($this->pick($row, $index, $this->columnMap['tanggal_manifest'])),
-            'tgl_ho_sartrans' => $this->toDate($this->pick($row, $index, $this->columnMap['tgl_ho_sartrans'])),
+            'tanggal_manifest' => $tanggalManifest,
+            'tgl_resi' => $tglResi,
+            'tgl_ho_sartrans' => $tglHo,
             'koli' => $this->toIntOrNull($this->pick($row, $index, $this->columnMap['koli'])),
-            'completed_date' => $this->toDate($this->pick($row, $index, $this->columnMap['completed_date'])),
+            'completed_date' => $tglDelivered,
+            'tgl_delivered_panthera' => $tglDelivered,
             'tgl_sampai_kota_tujuan' => $this->toDate($this->pick($row, $index, $this->columnMap['tgl_sampai_kota_tujuan'])),
             'sla_threshold_days' => $this->toThresholdDays($this->pick($row, $index, $this->columnMap['sla_threshold_days'])),
             'status_akhir' => $this->cleanText($this->pick($row, $index, $this->columnMap['status_akhir'])),
@@ -555,7 +538,71 @@ class ShipmentSyncService
         return $fallback;
     }
 
-    protected function flush(array $chunks): void
+    /**
+     * Sync non-replace memperbarui baris yang sudah ada berdasarkan `no_resi`,
+     * bukan menghapus lalu memasukkan ulang. Dengan begitu ID tetap stabil,
+     * kolom status/tanggal selalu mengikuti CSV terbaru, dan `updated_at`
+     * berubah setiap kali tombol sync dijalankan.
+     *
+     * Nomor resi kembar tetap dipertahankan: baris ke-n untuk resi yang sama
+     * dipasangkan dengan baris lama ke-n (urut ID), lalu sisa baris lama yang
+     * sudah tidak ada di CSV dihapus. Baris tanpa resi tidak punya identitas
+     * untuk dicocokkan, jadi diperlakukan seperti sebelumnya: bersihkan lalu
+     * masukkan ulang agar tidak menumpuk.
+     */
+    protected function upsertRowsByNoResi(array $rows): void
+    {
+        $nullRows = [];
+        $incomingByResi = [];
+
+        foreach ($rows as $data) {
+            if ($data['no_resi'] === null) {
+                $nullRows[] = $data;
+
+                continue;
+            }
+
+            // Prefix mencegah string resi numerik (termasuk yang berawalan nol)
+            // berubah menjadi integer saat dipakai sebagai key array PHP.
+            $incomingByResi['resi:'.$data['no_resi']][] = $data;
+        }
+
+        Shipment::whereNull('no_resi')->delete();
+
+        foreach (array_chunk($nullRows, 500) as $chunk) {
+            $this->insertRows($chunk);
+        }
+
+        foreach (array_chunk($incomingByResi, 500, true) as $chunk) {
+            $existingByResi = Shipment::query()
+                ->whereIn('no_resi', array_map(fn ($key) => substr($key, 5), array_keys($chunk)))
+                ->orderBy('id')
+                ->get()
+                ->groupBy(fn (Shipment $shipment) => 'resi:'.$shipment->no_resi);
+
+            foreach ($chunk as $key => $incomingRows) {
+                $existingRows = $existingByResi->get($key, collect())->values();
+
+                foreach ($incomingRows as $i => $data) {
+                    $existing = $existingRows->get($i);
+
+                    if ($existing instanceof Shipment) {
+                        $existing->fill($data)->save();
+                    } else {
+                        Shipment::create($data);
+                    }
+                }
+
+                if ($existingRows->count() > count($incomingRows)) {
+                    Shipment::query()
+                        ->whereKey($existingRows->slice(count($incomingRows))->modelKeys())
+                        ->delete();
+                }
+            }
+        }
+    }
+
+    protected function insertRows(array $chunks): void
     {
         $now = now();
 

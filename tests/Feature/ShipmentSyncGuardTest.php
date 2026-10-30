@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Models\Shipment;
 use App\Services\ShipmentSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 use Tests\TestCase;
@@ -201,6 +203,46 @@ class ShipmentSyncGuardTest extends TestCase
 
         $this->assertSame(1, $count);
         $this->assertSame(1, Shipment::count());
+    }
+
+    public function test_update_sync_refreshes_matching_rows_in_place(): void
+    {
+        Cache::put(
+            ShipmentSyncService::SOURCE_FINGERPRINT_CACHE_KEY,
+            hash('sha256', self::URL)
+        );
+
+        Carbon::setTestNow('2026-10-30 10:00:00');
+
+        $old = Shipment::create([
+            'no_resi' => $this->resi(1),
+            'nama_sekolah' => 'SD Lama',
+            'status_akhir' => 'Completed',
+        ]);
+
+        $previousSync = now()->subDay();
+        Shipment::query()->whereKey($old->id)->update(['updated_at' => $previousSync]);
+
+        $this->fakeCsv(
+            "No Resi,NAMA SEKOLAH,Status Akhir,Tgl HO dari SarTrans,Completed date\n".
+            "{$this->resi(1)},SD Baru,On Delivery,01/10/2026,02/10/2026\n"
+        );
+
+        $count = app(ShipmentSyncService::class)->sync(replace: false);
+        $fresh = Shipment::query()->findOrFail($old->id);
+
+        $this->assertSame(1, $count);
+        $this->assertSame(1, Shipment::count(), 'Baris yang sama tidak boleh digandakan.');
+        $this->assertSame('SD Baru', $fresh->nama_sekolah);
+        $this->assertSame('On Delivery', $fresh->status_akhir);
+        $this->assertSame('2026-10-01', $fresh->tgl_ho_sartrans->toDateString());
+        $this->assertSame('2026-10-02', $fresh->tgl_delivered_panthera->toDateString());
+        $this->assertTrue(
+            $fresh->updated_at->gt($previousSync),
+            'Sync harus memperbarui updated_at pada baris yang sudah ada.'
+        );
+
+        Carbon::setTestNow();
     }
 
     public function test_a_healthy_sheet_is_still_replaced_normally(): void
